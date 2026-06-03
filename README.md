@@ -45,6 +45,7 @@ UI stays fast and the upstream feeds are not hammered.
 | `GET /api/threats` | Indicators, filterable by `source`, `type`, `severity`, `q`, `limit` |
 | `GET /api/map` | Geolocated indicators for the map |
 | `GET /api/cve` | Latest CVEs from NVD |
+| `GET /api/stix` | Current indicators + CVEs as a **STIX 2.1** bundle (MISP/OpenCTI/SIEM interop) |
 | `GET /api/stats` | Aggregate counts (by source/type/severity, top countries) |
 | `GET /api/sources/health` | Per-source freshness and error state |
 | `GET /api/notify/status` | Alert notifier config + last-run state |
@@ -71,6 +72,36 @@ npm start            # serves API and the built frontend from :4000
 When `frontend/dist` exists, the backend serves it directly, so a single process hosts
 both the API and the dashboard.
 
+### Docker (one-command deploy)
+
+The repo ships a multi-stage `Dockerfile` and a `docker-compose.yml` that build both
+workspaces and run the single-process production server (API + dashboard) on port 4000.
+
+```bash
+docker compose up --build      # build + start; dashboard at http://localhost:4000
+```
+
+To enable scheduled alerts, uncomment the `NOTIFY_*` / channel variables in
+`docker-compose.yml`. The container includes a healthcheck that polls `/api/health`.
+
+Plain Docker without compose:
+
+```bash
+docker build -t threat-intel-platform .
+docker run -p 4000:4000 threat-intel-platform
+```
+
+### STIX 2.1 export
+
+`GET /api/stix` returns a STIX 2.1 bundle of the current dataset for ingestion into
+MISP / OpenCTI / SIEMs. IP/URL/domain indicators become `indicator` SDOs with a STIX
+pattern (e.g. `[ipv4-addr:value = '1.2.3.4']`); CVE-typed indicators and NVD CVEs
+become `vulnerability` SDOs. Object IDs are deterministic so re-exports correlate.
+
+```bash
+curl http://localhost:4000/api/stix > bundle.json
+```
+
 ## Scripts
 
 | Command | Description |
@@ -79,6 +110,7 @@ both the API and the dashboard.
 | `npm run build` | Build both workspaces |
 | `npm run typecheck` | Type-check both workspaces |
 | `npm run lint` | Lint both workspaces |
+| `npm test` | Run the backend unit tests (vitest) |
 
 ## Alerting (DingTalk / Telegram scheduled push)
 
@@ -119,6 +151,8 @@ See `.env.example` for the full list of variables.
 |---------|---------|-------------|
 | `PORT` | `4000` | Backend port |
 | `REFRESH_INTERVAL_MS` | `900000` | Feed refresh interval (15 min) |
+| `API_RATE_WINDOW_MS` | `60000` | Rate-limit window for `/api` (1 min) |
+| `API_RATE_MAX` | `120` | Max `/api` requests per window per IP |
 | `VITE_API_BASE` | `''` | Frontend API base (leave empty to use same-origin / dev proxy) |
 | `NOTIFY_ENABLED` | `false` | Master switch for scheduled alert push |
 | `NOTIFY_INTERVAL_MS` | `3600000` | Digest push interval (1 h) |
