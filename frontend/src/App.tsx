@@ -145,16 +145,8 @@ export default function App() {
       <ThreatTable threats={threats} total={total} loading={threatsLoading} />
 
       <footer className="mt-8 border-t border-white/10 pt-4 text-center text-xs text-slate-500">
-        Data: CISA KEV · abuse.ch Feodo Tracker · abuse.ch URLhaus · NVD. Inspired by{' '}
-        <a
-          href="https://github.com/koala73/worldmonitor"
-          target="_blank"
-          rel="noreferrer"
-          className="text-slate-400 hover:underline"
-        >
-          worldmonitor
-        </a>
-        . For defensive / research use.
+        Data: CISA KEV · abuse.ch Feodo Tracker · abuse.ch URLhaus · NVD. For defensive /
+        research use.
       </footer>
     </div>
   );

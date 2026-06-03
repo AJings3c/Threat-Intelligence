@@ -1,6 +1,6 @@
 # Threat Intelligence Platform
 
-**Global threat-intelligence resource platform** — aggregates public cyber threat-intel feeds into a unified situational-awareness dashboard. Inspired by [koala73/worldmonitor](https://github.com/koala73/worldmonitor).
+**Global threat-intelligence resource platform** — aggregates public cyber threat-intel feeds into a unified situational-awareness dashboard.
 
 The platform pulls indicators from multiple open feeds, normalizes them into a single
 data model, geolocates IP indicators, and surfaces everything through a real-time

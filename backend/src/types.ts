@@ -1,5 +1,5 @@
 // Unified threat-intelligence data model.
-// Inspired by worldmonitor's CyberThreat shape, normalized across all sources.
+// Normalized across all sources (CISA KEV, abuse.ch Feodo/URLhaus, NVD).
 
 export type ThreatSource = 'cisa_kev' | 'feodo' | 'urlhaus' | 'nvd';
 
