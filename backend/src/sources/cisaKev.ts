@@ -19,40 +19,42 @@ interface KevResponse {
   vulnerabilities: KevVuln[];
 }
 
+// Pure normalizer (no network) so it can be unit-tested in isolation.
+export function normalizeCisaKev(data: KevResponse, limit = 400): ThreatIndicator[] {
+  // Most-recently-added first.
+  const sorted = [...(data.vulnerabilities ?? [])].sort((a, b) =>
+    (b.dateAdded ?? '').localeCompare(a.dateAdded ?? ''),
+  );
+
+  return sorted.slice(0, limit).map((v) => {
+    const ransomware = (v.knownRansomwareCampaignUse ?? '').toLowerCase() === 'known';
+    return {
+      id: `kev:${v.cveID}`,
+      source: 'cisa_kev',
+      type: 'exploited_vuln',
+      indicator: v.cveID,
+      indicatorType: 'cve',
+      severity: ransomware ? 'critical' : 'high',
+      title: v.vulnerabilityName,
+      description: v.shortDescription,
+      tags: [
+        v.vendorProject,
+        v.product,
+        ...(ransomware ? ['ransomware'] : []),
+      ].filter(Boolean),
+      reference: `https://nvd.nist.gov/vuln/detail/${v.cveID}`,
+      firstSeen: v.dateAdded ? new Date(v.dateAdded).toISOString() : undefined,
+    };
+  });
+}
+
 export async function fetchCisaKev(limit = 400): Promise<FetchResult<ThreatIndicator>> {
   const fetchedAt = Date.now();
   try {
     const res = await fetchWithTimeout(KEV_URL);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as KevResponse;
-
-    // Most-recently-added first.
-    const sorted = [...data.vulnerabilities].sort((a, b) =>
-      (b.dateAdded ?? '').localeCompare(a.dateAdded ?? ''),
-    );
-
-    const items: ThreatIndicator[] = sorted.slice(0, limit).map((v) => {
-      const ransomware = (v.knownRansomwareCampaignUse ?? '').toLowerCase() === 'known';
-      return {
-        id: `kev:${v.cveID}`,
-        source: 'cisa_kev',
-        type: 'exploited_vuln',
-        indicator: v.cveID,
-        indicatorType: 'cve',
-        severity: ransomware ? 'critical' : 'high',
-        title: v.vulnerabilityName,
-        description: v.shortDescription,
-        tags: [
-          v.vendorProject,
-          v.product,
-          ...(ransomware ? ['ransomware'] : []),
-        ].filter(Boolean),
-        reference: `https://nvd.nist.gov/vuln/detail/${v.cveID}`,
-        firstSeen: v.dateAdded ? new Date(v.dateAdded).toISOString() : undefined,
-      };
-    });
-
-    return { items, fetchedAt, error: null };
+    return { items: normalizeCisaKev(data, limit), fetchedAt, error: null };
   } catch (err) {
     return { items: [], fetchedAt, error: errorMessage(err) };
   }

@@ -1,0 +1,23 @@
+services:
+  threat-intel:
+    build: .
+    image: threat-intel-platform
+    ports:
+      - "4000:4000"
+    environment:
+      PORT: "4000"
+      REFRESH_INTERVAL_MS: "900000"
+      # Optional alerting — uncomment and fill in to enable scheduled digests.
+      # NOTIFY_ENABLED: "true"
+      # NOTIFY_MIN_SEVERITY: "high"
+      # DINGTALK_WEBHOOK: ""
+      # DINGTALK_SECRET: ""
+      # TELEGRAM_BOT_TOKEN: ""
+      # TELEGRAM_CHAT_ID: ""
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s

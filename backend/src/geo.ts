@@ -21,6 +21,14 @@ export function isIpv4(value: string): boolean {
 const BATCH_SIZE = 100;
 const MAX_BATCHES = 3;
 
+// When ip-api rate-limits us (HTTP 429), it returns an X-Ttl header (seconds until
+// the window resets). We back off until then instead of hammering the endpoint.
+let rateLimitedUntil = 0;
+
+export function geoRateLimitedUntil(): number {
+  return rateLimitedUntil;
+}
+
 interface IpApiEntry {
   query: string;
   status: string;
@@ -44,6 +52,9 @@ export async function geolocate(ips: string[]): Promise<Map<string, GeoInfo>> {
     }
   }
 
+  // Respect an active rate-limit backoff window: serve only cached results.
+  if (Date.now() < rateLimitedUntil) return result;
+
   const toQuery = uncached.slice(0, BATCH_SIZE * MAX_BATCHES);
   for (let i = 0; i < toQuery.length; i += BATCH_SIZE) {
     const batch = toQuery.slice(i, i + BATCH_SIZE);
@@ -56,7 +67,15 @@ export async function geolocate(ips: string[]): Promise<Map<string, GeoInfo>> {
           body: JSON.stringify(batch),
         },
         20_000,
+        { retries: 0 },
       );
+      if (res.status === 429) {
+        // Honor ip-api's reset hint (seconds); default to 60s if absent.
+        const ttl = Number(res.headers.get('X-Ttl') ?? '60');
+        rateLimitedUntil = Date.now() + (Number.isFinite(ttl) ? ttl : 60) * 1000;
+        console.warn(`[geo] rate-limited; backing off ${ttl}s`);
+        break;
+      }
       if (!res.ok) break;
       const data = (await res.json()) as IpApiEntry[];
       for (const entry of data) {

@@ -45,6 +45,36 @@ function isoDate(d: Date): string {
   return d.toISOString().replace('Z', '');
 }
 
+// Pure normalizer (no network) so it can be unit-tested in isolation.
+export function normalizeNvd(data: NvdResponse, limit = 60): CveItem[] {
+  const vulns = data.vulnerabilities ?? [];
+  const items: CveItem[] = vulns.map(({ cve }) => {
+    const cvss = pickCvss(cve);
+    const score = cvss?.baseScore;
+    const description =
+      cve.descriptions?.find((d) => d.lang === 'en')?.value ??
+      cve.descriptions?.[0]?.value ??
+      'No description available.';
+    return {
+      id: cve.id,
+      source: 'nvd',
+      title: cve.id,
+      description,
+      severity: cvssToSeverity(score),
+      cvssScore: score,
+      cvssVector: cvss?.vectorString,
+      published: cve.published,
+      lastModified: cve.lastModified,
+      reference: `https://nvd.nist.gov/vuln/detail/${cve.id}`,
+      knownExploited: false,
+    };
+  });
+
+  // Newest first.
+  items.sort((a, b) => (b.published ?? '').localeCompare(a.published ?? ''));
+  return items.slice(0, limit);
+}
+
 export async function fetchNvd(limit = 60, days = 14): Promise<FetchResult<CveItem>> {
   const fetchedAt = Date.now();
   try {
@@ -58,34 +88,7 @@ export async function fetchNvd(limit = 60, days = 14): Promise<FetchResult<CveIt
     const res = await fetchWithTimeout(`${NVD_URL}?${params.toString()}`, {}, 30_000);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as NvdResponse;
-    const vulns = data.vulnerabilities ?? [];
-
-    const items: CveItem[] = vulns.map(({ cve }) => {
-      const cvss = pickCvss(cve);
-      const score = cvss?.baseScore;
-      const description =
-        cve.descriptions?.find((d) => d.lang === 'en')?.value ??
-        cve.descriptions?.[0]?.value ??
-        'No description available.';
-      return {
-        id: cve.id,
-        source: 'nvd',
-        title: cve.id,
-        description,
-        severity: cvssToSeverity(score),
-        cvssScore: score,
-        cvssVector: cvss?.vectorString,
-        published: cve.published,
-        lastModified: cve.lastModified,
-        reference: `https://nvd.nist.gov/vuln/detail/${cve.id}`,
-        knownExploited: false,
-      };
-    });
-
-    // Newest first.
-    items.sort((a, b) => (b.published ?? '').localeCompare(a.published ?? ''));
-
-    return { items: items.slice(0, limit), fetchedAt, error: null };
+    return { items: normalizeNvd(data, limit), fetchedAt, error: null };
   } catch (err) {
     return { items: [], fetchedAt, error: errorMessage(err) };
   }

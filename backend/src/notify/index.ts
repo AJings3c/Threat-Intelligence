@@ -1,6 +1,7 @@
 import type { Severity } from '../types.js';
 import { store, SOURCE_LABELS } from '../store.js';
 import { loadNotifyConfig, severityRank, type NotifyConfig } from './config.js';
+import { collectNewAlerts } from './collect.js';
 import { buildDigest, type AlertItem } from './format.js';
 import { sendDingtalk } from './dingtalk.js';
 import { sendTelegram } from './telegram.js';
@@ -35,45 +36,13 @@ class Notifier {
 
   // Collect indicators that meet the severity/source filters and have not been alerted yet.
   private collectNew(): AlertItem[] {
-    const minRank = severityRank(this.config.minSeverity);
-    const allow = this.config.sources;
-    const items: AlertItem[] = [];
-
-    for (const t of store.getIndicators()) {
-      if (severityRank(t.severity) < minRank) continue;
-      if (allow && !allow.includes(t.source)) continue;
-      if (this.seen.has(t.id)) continue;
-      items.push({
-        id: t.id,
-        sourceLabel: SOURCE_LABELS[t.source],
-        severity: t.severity,
-        title: t.title ?? t.type,
-        indicator: t.indicator,
-        reference: t.reference,
-        country: t.country,
-      });
-    }
-
-    // Also alert on standalone CVEs (NVD) meeting the threshold.
-    const nvdAllowed = !allow || allow.includes('nvd');
-    if (nvdAllowed) {
-      for (const c of store.getAllCves()) {
-        if (severityRank(c.severity) < minRank) continue;
-        if (this.seen.has(c.id)) continue;
-        items.push({
-          id: c.id,
-          sourceLabel: SOURCE_LABELS.nvd,
-          severity: c.severity,
-          title: c.title,
-          indicator: c.id,
-          reference: c.reference,
-        });
-      }
-    }
-
-    // Highest severity first for a useful digest ordering.
-    items.sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
-    return items;
+    return collectNewAlerts({
+      indicators: store.getIndicators(),
+      cves: store.getAllCves(),
+      seen: this.seen,
+      minSeverity: this.config.minSeverity,
+      sources: this.config.sources,
+    });
   }
 
   private markSeen(items: AlertItem[]): void {

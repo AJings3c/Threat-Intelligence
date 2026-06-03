@@ -5,6 +5,7 @@ import type {
   ThreatSource,
   Severity,
   ThreatType,
+  FetchResult,
 } from './types.js';
 import { fetchCisaKev } from './sources/cisaKev.js';
 import { fetchFeodo } from './sources/feodo.js';
@@ -25,9 +26,18 @@ interface SourceState {
   count: number;
 }
 
+// Indicator-producing sources (NVD feeds the separate CVE list).
+type IndicatorSource = 'cisa_kev' | 'feodo' | 'urlhaus';
+
 class ThreatStore {
   private indicators: ThreatIndicator[] = [];
   private cves: CveItem[] = [];
+  // Per-source snapshots so a failing feed can fall back to its last good data.
+  private sourceItems: Record<IndicatorSource, ThreatIndicator[]> = {
+    cisa_kev: [],
+    feodo: [],
+    urlhaus: [],
+  };
   private state: Record<ThreatSource, SourceState> = {
     cisa_kev: { fetchedAt: null, error: null, count: 0 },
     feodo: { fetchedAt: null, error: null, count: 0 },
@@ -56,24 +66,48 @@ class ThreatStore {
         fetchNvd(),
       ]);
 
-      const indicators = [...kev.items, ...feodo.items, ...urlhaus.items];
-      await this.enrichGeo(indicators);
-
-      this.indicators = indicators;
-      this.cves = nvd.items;
-
-      this.state.cisa_kev = { fetchedAt: kev.fetchedAt, error: kev.error, count: kev.items.length };
-      this.state.feodo = { fetchedAt: feodo.fetchedAt, error: feodo.error, count: feodo.items.length };
-      this.state.urlhaus = {
-        fetchedAt: urlhaus.fetchedAt,
-        error: urlhaus.error,
-        count: urlhaus.items.length,
+      // On a per-source failure, keep that source's previous data (stale fallback)
+      // instead of dropping it, so one flaky feed can't blank the dashboard.
+      this.applySource('cisa_kev', kev);
+      this.applySource('feodo', feodo);
+      this.applySource('urlhaus', urlhaus);
+      if (nvd.error === null) this.cves = nvd.items;
+      this.state.nvd = {
+        fetchedAt: nvd.error === null ? nvd.fetchedAt : this.state.nvd.fetchedAt,
+        error: nvd.error,
+        count: nvd.error === null ? nvd.items.length : this.state.nvd.count,
       };
-      this.state.nvd = { fetchedAt: nvd.fetchedAt, error: nvd.error, count: nvd.items.length };
+
+      const indicators = [
+        ...this.sourceItems.cisa_kev,
+        ...this.sourceItems.feodo,
+        ...this.sourceItems.urlhaus,
+      ];
+      await this.enrichGeo(indicators);
+      this.indicators = indicators;
 
       this.lastRefresh = Date.now();
     } finally {
       this.refreshing = false;
+    }
+  }
+
+  // Replace a source's snapshot on success; on error retain the last good snapshot
+  // and only surface the error in health (fetchedAt/count stay at last success).
+  private applySource(source: IndicatorSource, result: FetchResult<ThreatIndicator>): void {
+    if (result.error === null) {
+      this.sourceItems[source] = result.items;
+      this.state[source] = {
+        fetchedAt: result.fetchedAt,
+        error: null,
+        count: result.items.length,
+      };
+    } else {
+      this.state[source] = {
+        fetchedAt: this.state[source].fetchedAt,
+        error: result.error,
+        count: this.state[source].count,
+      };
     }
   }
 
