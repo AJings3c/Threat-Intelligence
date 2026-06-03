@@ -1,0 +1,161 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { CveItem, SourceHealth, Stats, ThreatIndicator } from './types';
+import { fetchCves, fetchHealth, fetchMap, fetchStats, fetchThreats } from './api';
+import { StatsCards } from './components/StatsCards';
+import { ThreatMap } from './components/ThreatMap';
+import { Filters, type FilterState } from './components/Filters';
+import { ThreatTable } from './components/ThreatTable';
+import { CvePanel } from './components/CvePanel';
+import { SourceHealthBar } from './components/SourceHealthBar';
+
+const REFRESH_MS = 60_000;
+
+export default function App() {
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [points, setPoints] = useState<ThreatIndicator[]>([]);
+  const [cves, setCves] = useState<CveItem[]>([]);
+  const [health, setHealth] = useState<SourceHealth[]>([]);
+  const [threats, setThreats] = useState<ThreatIndicator[]>([]);
+  const [total, setTotal] = useState(0);
+  const [threatsLoading, setThreatsLoading] = useState(true);
+  const [cvesLoading, setCvesLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [filters, setFilters] = useState<FilterState>({
+    source: '',
+    type: '',
+    severity: '',
+    q: '',
+  });
+
+  const loadOverview = useCallback(async () => {
+    try {
+      const [s, m, h] = await Promise.all([fetchStats(), fetchMap(), fetchHealth()]);
+      setStats(s);
+      setPoints(m.points);
+      setHealth(h.sources);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load overview');
+    }
+  }, []);
+
+  const loadCves = useCallback(async () => {
+    setCvesLoading(true);
+    try {
+      const res = await fetchCves(40);
+      setCves(res.cves);
+    } catch {
+      // non-fatal
+    } finally {
+      setCvesLoading(false);
+    }
+  }, []);
+
+  // Initial load + periodic overview refresh.
+  useEffect(() => {
+    void loadOverview();
+    void loadCves();
+    const id = setInterval(() => {
+      void loadOverview();
+    }, REFRESH_MS);
+    return () => clearInterval(id);
+  }, [loadOverview, loadCves]);
+
+  // Debounced threats query whenever filters change.
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      setThreatsLoading(true);
+      try {
+        const res = await fetchThreats({
+          source: filters.source || undefined,
+          type: filters.type || undefined,
+          severity: filters.severity || undefined,
+          q: filters.q || undefined,
+          limit: 300,
+        });
+        setThreats(res.threats);
+        setTotal(res.total);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load threats');
+      } finally {
+        setThreatsLoading(false);
+      }
+    }, 300);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [filters]);
+
+  const lastRefresh = stats?.lastRefresh ? new Date(stats.lastRefresh) : null;
+
+  return (
+    <div className="mx-auto max-w-[1400px] px-4 py-5 md:px-6">
+      <header className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-center gap-3">
+          <img src="/shield.svg" alt="" className="h-9 w-9" />
+          <div>
+            <h1 className="text-xl font-bold text-white">Threat Intelligence Platform</h1>
+            <p className="text-xs text-slate-400">
+              Unified situational awareness across public cyber threat feeds
+            </p>
+          </div>
+        </div>
+        <div className="text-right text-xs text-slate-400">
+          {lastRefresh ? (
+            <>
+              Feeds updated{' '}
+              <span className="text-slate-200">{lastRefresh.toLocaleTimeString()}</span>
+            </>
+          ) : (
+            'Warming up feeds…'
+          )}
+        </div>
+      </header>
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-300">
+          {error}
+        </div>
+      )}
+
+      <div className="mb-4">
+        <SourceHealthBar sources={health} />
+      </div>
+
+      <div className="mb-5">
+        <StatsCards stats={stats} />
+      </div>
+
+      <div className="mb-5 grid grid-cols-1 gap-5 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <ThreatMap points={points} />
+        </div>
+        <div>
+          <CvePanel cves={cves} loading={cvesLoading} />
+        </div>
+      </div>
+
+      <div className="mb-3">
+        <Filters value={filters} onChange={setFilters} />
+      </div>
+
+      <ThreatTable threats={threats} total={total} loading={threatsLoading} />
+
+      <footer className="mt-8 border-t border-white/10 pt-4 text-center text-xs text-slate-500">
+        Data: CISA KEV · abuse.ch Feodo Tracker · abuse.ch URLhaus · NVD. Inspired by{' '}
+        <a
+          href="https://github.com/koala73/worldmonitor"
+          target="_blank"
+          rel="noreferrer"
+          className="text-slate-400 hover:underline"
+        >
+          worldmonitor
+        </a>
+        . For defensive / research use.
+      </footer>
+    </div>
+  );
+}
