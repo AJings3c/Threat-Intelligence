@@ -12,7 +12,7 @@ import { fetchUrlhaus } from './sources/urlhaus.js';
 import { fetchNvd } from './sources/nvd.js';
 import { geolocate, isIpv4 } from './geo.js';
 
-const SOURCE_LABELS: Record<ThreatSource, string> = {
+export const SOURCE_LABELS: Record<ThreatSource, string> = {
   cisa_kev: 'CISA KEV',
   feodo: 'abuse.ch Feodo Tracker',
   urlhaus: 'abuse.ch URLhaus',
@@ -142,6 +142,15 @@ class ThreatStore {
 
   getCves(limit = 60): { cves: CveItem[]; total: number } {
     return { cves: this.cves.slice(0, limit), total: this.cves.length };
+  }
+
+  // Full snapshots used by the alert notifier (no limit applied).
+  getIndicators(): ThreatIndicator[] {
+    return this.indicators;
+  }
+
+  getAllCves(): CveItem[] {
+    return this.cves;
   }
 
   getMapPoints(): ThreatIndicator[] {

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { store } from './store.js';
+import { notifier } from './notify/index.js';
 import { errorMessage } from './util.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
@@ -13,6 +14,7 @@ const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS ?? 15 * 60 * 
 const app = express();
 app.use(cors());
 app.use(compression());
+app.use(express.json());
 
 const api = express.Router();
 
@@ -54,6 +56,18 @@ api.get('/sources/health', (_req, res) => {
   res.json({ sources: store.getHealth() });
 });
 
+api.get('/notify/status', (_req, res) => {
+  res.json(notifier.status());
+});
+
+// Manually trigger a digest push to all configured channels (DingTalk / Telegram).
+api.post('/notify/test', (_req, res) => {
+  notifier
+    .sendTest()
+    .then((out) => res.json(out))
+    .catch((err) => res.status(500).json({ error: errorMessage(err) }));
+});
+
 app.use('/api', api);
 
 // Serve the built frontend if present (single-process production deploy).
@@ -79,9 +93,14 @@ async function bootstrap(): Promise<void> {
     console.log(
       `[server] initial refresh done: ${stats.totalIndicators} indicators, ${stats.totalCves} CVEs`,
     );
+    // Prime the alert baseline against the initial dataset so we only push new threats later.
+    await notifier.runOnce();
   } catch (err) {
     console.error(`[server] initial refresh failed: ${errorMessage(err)}`);
   }
+
+  // Start the scheduled alert push (no-op if disabled / unconfigured).
+  notifier.start();
 
   setInterval(() => {
     store
