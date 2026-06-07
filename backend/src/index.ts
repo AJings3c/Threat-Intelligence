@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import { store } from './store.js';
 import { notifier } from './notify/index.js';
 import { errorMessage } from './util.js';
+import { initPersistence, getTrend, isPersistEnabled } from './persist.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS ?? 15 * 60 * 1000);
@@ -54,6 +55,14 @@ api.get('/stats', (_req, res) => {
 
 api.get('/sources/health', (_req, res) => {
   res.json({ sources: store.getHealth() });
+});
+
+// Historical indicator-count trend (requires persistence; empty when disabled).
+api.get('/trend', (req, res) => {
+  const days = req.query.days ? Number(req.query.days) : 30;
+  const window = Number.isFinite(days) && days > 0 ? Math.min(days, 365) : 30;
+  const since = Date.now() - window * 24 * 60 * 60 * 1000;
+  res.json({ enabled: isPersistEnabled(), points: getTrend(since) });
 });
 
 api.get('/notify/status', (_req, res) => {
@@ -111,6 +120,10 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
 });
 
 async function bootstrap(): Promise<void> {
+  // Open persistence first (no-op unless DATA_DIR is set) so the first refresh can
+  // hydrate the geo cache and record first/last-seen.
+  initPersistence();
+
   app.listen(PORT, () => {
     console.log(`[server] threat-intel-platform API listening on :${PORT}`);
   });

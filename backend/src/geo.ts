@@ -1,4 +1,5 @@
 import { fetchWithTimeout, errorMessage } from './util.js';
+import { loadGeoCache, saveGeo } from './persist.js';
 
 export interface GeoInfo {
   country?: string;
@@ -7,8 +8,16 @@ export interface GeoInfo {
   lon?: number;
 }
 
-// Persistent in-memory cache so we don't re-query the same IP.
+// In-memory cache so we don't re-query the same IP. Hydrated lazily from persistence
+// (if enabled) on first use so a restart doesn't re-query everything.
 const geoCache = new Map<string, GeoInfo>();
+let hydrated = false;
+
+function ensureHydrated(): void {
+  if (hydrated) return;
+  hydrated = true;
+  for (const [ip, info] of loadGeoCache()) geoCache.set(ip, info);
+}
 
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 
@@ -31,6 +40,7 @@ interface IpApiEntry {
 }
 
 export async function geolocate(ips: string[]): Promise<Map<string, GeoInfo>> {
+  ensureHydrated();
   const result = new Map<string, GeoInfo>();
   const unique = Array.from(new Set(ips.filter(isIpv4)));
   const uncached: string[] = [];
@@ -68,6 +78,7 @@ export async function geolocate(ips: string[]): Promise<Map<string, GeoInfo>> {
           lon: entry.lon,
         };
         geoCache.set(entry.query, info);
+        saveGeo(entry.query, info);
         result.set(entry.query, info);
       }
     } catch (err) {

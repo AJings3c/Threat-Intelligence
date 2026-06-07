@@ -13,6 +13,7 @@ import { fetchUrlhaus } from './sources/urlhaus.js';
 import { fetchNvd } from './sources/nvd.js';
 import { geolocate, isIpv4 } from './geo.js';
 import { dedupeIndicators } from './correlate.js';
+import { recordSeen, recordSnapshot } from './persist.js';
 
 // Hard server-side cap so a client can't request an unbounded result set.
 export const MAX_QUERY_LIMIT = 2000;
@@ -96,6 +97,9 @@ class ThreatStore {
       // Cross-mark CVEs already in CISA KEV as known-exploited.
       this.correlateKev();
 
+      // Persist first/last-seen + a trend snapshot (no-op unless DATA_DIR is set).
+      this.persistObservations();
+
       this.lastRefresh = Date.now();
     } finally {
       this.refreshing = false;
@@ -139,6 +143,37 @@ class ThreatStore {
         if (c.severity !== 'critical') c.severity = 'high';
       }
     }
+  }
+
+  private keyOf(t: ThreatIndicator): string {
+    return `${t.indicatorType}:${t.indicator.toLowerCase()}`;
+  }
+
+  // Record observations and a severity snapshot. recordSeen returns the persisted
+  // first-seen per key so firstSeen stays stable across restarts.
+  private persistObservations(): void {
+    const nowIso = new Date().toISOString();
+    const firstSeen = recordSeen(
+      this.indicators.map((t) => this.keyOf(t)),
+      nowIso,
+    );
+    if (firstSeen.size > 0) {
+      for (const t of this.indicators) {
+        const seen = firstSeen.get(this.keyOf(t));
+        if (!seen) continue;
+        t.firstSeen = t.firstSeen && t.firstSeen < seen ? t.firstSeen : seen;
+        t.lastSeen = nowIso;
+      }
+    }
+    const sev = this.getStats().bySeverity;
+    recordSnapshot({
+      ts: Date.now(),
+      total: this.indicators.length,
+      critical: sev.critical ?? 0,
+      high: sev.high ?? 0,
+      medium: sev.medium ?? 0,
+      low: sev.low ?? 0,
+    });
   }
 
   // Extract an IPv4 from an indicator for map plotting, then geolocate in bulk.
