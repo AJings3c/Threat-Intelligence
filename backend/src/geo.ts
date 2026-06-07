@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import { fetchWithTimeout, errorMessage } from './util.js';
 import { loadGeoCache, saveGeo } from './persist.js';
 
@@ -27,8 +29,43 @@ export function isIpv4(value: string): boolean {
 
 // ip-api.com free batch endpoint: up to 100 IPs/request, ~15 requests/min.
 // We resolve a bounded number of uncached IPs per refresh to stay well under limits.
+// A persistent cache means coverage accumulates across refreshes.
 const BATCH_SIZE = 100;
-const MAX_BATCHES = 3;
+const MAX_BATCHES = 5;
+
+// --- Optional offline GeoLite2 lookup (no rate limit, no plaintext HTTP) ---
+// Enabled when GEOLITE2_DB points to a MaxMind .mmdb file. Falls back to ip-api otherwise.
+interface MmdbCity {
+  country?: { iso_code?: string; names?: { en?: string } };
+  location?: { latitude?: number; longitude?: number };
+}
+interface MmdbReader {
+  get(ip: string): MmdbCity | null;
+}
+
+let offlineReady = false;
+let offlineReader: MmdbReader | null = null;
+
+async function getOfflineReader(): Promise<MmdbReader | null> {
+  if (offlineReady) return offlineReader;
+  offlineReady = true;
+  const dbPath = process.env.GEOLITE2_DB?.trim();
+  if (!dbPath) return null;
+  try {
+    if (!fs.existsSync(dbPath)) {
+      console.warn(`[geo] GEOLITE2_DB not found at ${dbPath}; using online lookup`);
+      return null;
+    }
+    const require = createRequire(import.meta.url);
+    const maxmind = require('maxmind') as { open(path: string): Promise<unknown> };
+    offlineReader = (await maxmind.open(dbPath)) as MmdbReader;
+    console.log(`[geo] offline GeoLite2 lookup enabled (${dbPath})`);
+  } catch (err) {
+    console.warn(`[geo] failed to open GEOLITE2_DB: ${errorMessage(err)}`);
+    offlineReader = null;
+  }
+  return offlineReader;
+}
 
 interface IpApiEntry {
   query: string;
@@ -52,6 +89,30 @@ export async function geolocate(ips: string[]): Promise<Map<string, GeoInfo>> {
     } else {
       uncached.push(ip);
     }
+  }
+
+  // Prefer offline GeoLite2 when configured: no rate limit, resolves every uncached IP.
+  const reader = await getOfflineReader();
+  if (reader) {
+    for (const ip of uncached) {
+      let r: MmdbCity | null = null;
+      try {
+        r = reader.get(ip);
+      } catch {
+        r = null;
+      }
+      if (!r) continue;
+      const info: GeoInfo = {
+        country: r.country?.names?.en,
+        countryCode: r.country?.iso_code,
+        lat: r.location?.latitude,
+        lon: r.location?.longitude,
+      };
+      geoCache.set(ip, info);
+      saveGeo(ip, info);
+      result.set(ip, info);
+    }
+    return result;
   }
 
   const toQuery = uncached.slice(0, BATCH_SIZE * MAX_BATCHES);
