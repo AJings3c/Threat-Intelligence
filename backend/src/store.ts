@@ -5,6 +5,7 @@ import type {
   ThreatSource,
   Severity,
   ThreatType,
+  FetchResult,
 } from './types.js';
 import { fetchCisaKev } from './sources/cisaKev.js';
 import { fetchFeodo } from './sources/feodo.js';
@@ -20,14 +21,25 @@ export const SOURCE_LABELS: Record<ThreatSource, string> = {
 };
 
 interface SourceState {
+  // Timestamp of the last SUCCESSFUL fetch (drives staleness/age).
   fetchedAt: number | null;
+  // Error from the most recent attempt (null when the last attempt succeeded).
   error: string | null;
   count: number;
 }
 
+// IOC feeds (everything except NVD, which produces standalone CVEs).
+type IocSource = Exclude<ThreatSource, 'nvd'>;
+
 class ThreatStore {
   private indicators: ThreatIndicator[] = [];
   private cves: CveItem[] = [];
+  // Last-good items retained per source so a transient feed failure doesn't wipe data.
+  private iocItems: Record<IocSource, ThreatIndicator[]> = {
+    cisa_kev: [],
+    feodo: [],
+    urlhaus: [],
+  };
   private state: Record<ThreatSource, SourceState> = {
     cisa_kev: { fetchedAt: null, error: null, count: 0 },
     feodo: { fetchedAt: null, error: null, count: 0 },
@@ -56,24 +68,64 @@ class ThreatStore {
         fetchNvd(),
       ]);
 
-      const indicators = [...kev.items, ...feodo.items, ...urlhaus.items];
+      this.applyIocResult('cisa_kev', kev);
+      this.applyIocResult('feodo', feodo);
+      this.applyIocResult('urlhaus', urlhaus);
+      this.applyCveResult(nvd);
+
+      const indicators = [
+        ...this.iocItems.cisa_kev,
+        ...this.iocItems.feodo,
+        ...this.iocItems.urlhaus,
+      ];
       await this.enrichGeo(indicators);
-
       this.indicators = indicators;
-      this.cves = nvd.items;
 
-      this.state.cisa_kev = { fetchedAt: kev.fetchedAt, error: kev.error, count: kev.items.length };
-      this.state.feodo = { fetchedAt: feodo.fetchedAt, error: feodo.error, count: feodo.items.length };
-      this.state.urlhaus = {
-        fetchedAt: urlhaus.fetchedAt,
-        error: urlhaus.error,
-        count: urlhaus.items.length,
-      };
-      this.state.nvd = { fetchedAt: nvd.fetchedAt, error: nvd.error, count: nvd.items.length };
+      // Cross-mark CVEs already in CISA KEV as known-exploited.
+      this.correlateKev();
 
       this.lastRefresh = Date.now();
     } finally {
       this.refreshing = false;
+    }
+  }
+
+  // Replace a source's retained items only when the fetch succeeded; otherwise keep
+  // the last-good data and record the error so the source shows as stale, not empty.
+  private applyIocResult(source: IocSource, result: FetchResult<ThreatIndicator>): void {
+    if (result.error === null) {
+      this.iocItems[source] = result.items;
+      this.state[source] = { fetchedAt: result.fetchedAt, error: null, count: result.items.length };
+    } else {
+      this.state[source] = {
+        fetchedAt: this.state[source].fetchedAt,
+        error: result.error,
+        count: this.iocItems[source].length,
+      };
+    }
+  }
+
+  private applyCveResult(result: FetchResult<CveItem>): void {
+    if (result.error === null) {
+      this.cves = result.items;
+      this.state.nvd = { fetchedAt: result.fetchedAt, error: null, count: result.items.length };
+    } else {
+      this.state.nvd = {
+        fetchedAt: this.state.nvd.fetchedAt,
+        error: result.error,
+        count: this.cves.length,
+      };
+    }
+  }
+
+  // Mark NVD CVEs that appear in the CISA KEV catalog as known-exploited and raise severity.
+  private correlateKev(): void {
+    const kevCves = new Set(this.iocItems.cisa_kev.map((t) => t.indicator));
+    for (const c of this.cves) {
+      if (kevCves.has(c.id)) {
+        c.knownExploited = true;
+        if (c.severity !== 'critical') c.severity = 'high';
+      }
     }
   }
 

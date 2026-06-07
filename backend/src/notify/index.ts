@@ -78,6 +78,18 @@ class Notifier {
 
   private markSeen(items: AlertItem[]): void {
     for (const item of items) this.seen.add(item.id);
+    this.trimSeen();
+  }
+
+  // Keep the de-dup set bounded; Set preserves insertion order, so evict the oldest ids.
+  private trimSeen(): void {
+    const overflow = this.seen.size - this.config.seenMax;
+    if (overflow <= 0) return;
+    let removed = 0;
+    for (const id of this.seen) {
+      this.seen.delete(id);
+      if (++removed >= overflow) break;
+    }
   }
 
   /** Run one digest cycle. Returns the items that were sent (empty if none/dry). */

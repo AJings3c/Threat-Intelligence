@@ -8,6 +8,8 @@ export interface NotifyConfig {
   minSeverity: Severity;
   sources: ThreatSource[] | null;
   maxItems: number;
+  // Upper bound on the de-dup "seen" set so a long-running process can't grow unbounded.
+  seenMax: number;
   dingtalk: { webhook: string; secret: string | null } | null;
   telegram: { botToken: string; chatId: string } | null;
 }
@@ -60,6 +62,7 @@ export function loadNotifyConfig(env: NodeJS.ProcessEnv = process.env): NotifyCo
     minSeverity: parseSeverity(env.NOTIFY_MIN_SEVERITY),
     sources: parseSources(env.NOTIFY_SOURCES),
     maxItems: Number(env.NOTIFY_MAX_ITEMS ?? 10),
+    seenMax: Math.max(1000, Number(env.NOTIFY_SEEN_MAX ?? 50_000)),
     dingtalk,
     telegram,
   };

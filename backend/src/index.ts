@@ -61,7 +61,25 @@ api.get('/notify/status', (_req, res) => {
 });
 
 // Manually trigger a digest push to all configured channels (DingTalk / Telegram).
-api.post('/notify/test', (_req, res) => {
+// Guarded: this endpoint sends real messages, so it must not be open to the world.
+// - If NOTIFY_TEST_TOKEN is set, the caller must supply it (x-notify-token header or ?token=).
+// - If it is not set, the route is allowed only outside production.
+const NOTIFY_TEST_TOKEN = process.env.NOTIFY_TEST_TOKEN?.trim() || null;
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+api.post('/notify/test', (req, res) => {
+  if (NOTIFY_TEST_TOKEN) {
+    const provided =
+      (typeof req.headers['x-notify-token'] === 'string' ? req.headers['x-notify-token'] : '') ||
+      (typeof req.query.token === 'string' ? req.query.token : '');
+    if (provided !== NOTIFY_TEST_TOKEN) {
+      res.status(401).json({ error: 'unauthorized: invalid or missing notify test token' });
+      return;
+    }
+  } else if (IS_PRODUCTION) {
+    res.status(403).json({ error: 'forbidden: set NOTIFY_TEST_TOKEN to enable this endpoint' });
+    return;
+  }
   notifier
     .sendTest()
     .then((out) => res.json(out))
