@@ -76,3 +76,17 @@ export interface CveResponse {
   cves: CveItem[];
   total: number;
 }
+
+export interface TrendPoint {
+  ts: number;
+  total: number;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+}
+
+export interface TrendResponse {
+  enabled: boolean;
+  points: TrendPoint[];
+}

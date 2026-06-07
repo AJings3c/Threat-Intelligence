@@ -10,6 +10,8 @@ export interface NotifyConfig {
   maxItems: number;
   // Upper bound on the de-dup "seen" set so a long-running process can't grow unbounded.
   seenMax: number;
+  // Consecutive failed refreshes before a source health alert fires.
+  sourceAlertThreshold: number;
   dingtalk: { webhook: string; secret: string | null } | null;
   telegram: { botToken: string; chatId: string } | null;
   slack: { webhook: string } | null;
@@ -70,6 +72,7 @@ export function loadNotifyConfig(env: NodeJS.ProcessEnv = process.env): NotifyCo
     sources: parseSources(env.NOTIFY_SOURCES),
     maxItems: Number(env.NOTIFY_MAX_ITEMS ?? 10),
     seenMax: Math.max(1000, Number(env.NOTIFY_SEEN_MAX ?? 50_000)),
+    sourceAlertThreshold: Math.max(1, Number(env.SOURCE_ALERT_THRESHOLD ?? 2)),
     dingtalk,
     telegram,
     slack,
