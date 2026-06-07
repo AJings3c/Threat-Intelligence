@@ -7,12 +7,43 @@ import fs from 'node:fs';
 import { store } from './store.js';
 import { notifier } from './notify/index.js';
 import { errorMessage } from './util.js';
+import { initPersistence, getTrend, isPersistEnabled } from './persist.js';
+import { buildStixBundle } from './stix.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS ?? 15 * 60 * 1000);
 
 const app = express();
 app.use(cors());
+
+// Server-Sent Events stream for live updates. Registered BEFORE compression so the
+// long-lived response is not buffered. Emits a `refresh` event after each feed refresh.
+app.get('/api/stream', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const send = (): void => {
+    const s = store.getStats();
+    const payload = {
+      totalIndicators: s.totalIndicators,
+      totalCves: s.totalCves,
+      lastRefresh: store.lastRefreshAt ? new Date(store.lastRefreshAt).toISOString() : null,
+    };
+    res.write(`event: refresh\ndata: ${JSON.stringify(payload)}\n\n`);
+  };
+
+  res.write('event: hello\ndata: {}\n\n');
+  const unsubscribe = store.onRefresh(send);
+  const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
+  req.on('close', () => {
+    clearInterval(ping);
+    unsubscribe();
+    res.end();
+  });
+});
+
 app.use(compression());
 app.use(express.json());
 
@@ -56,12 +87,45 @@ api.get('/sources/health', (_req, res) => {
   res.json({ sources: store.getHealth() });
 });
 
+// Historical indicator-count trend (requires persistence; empty when disabled).
+api.get('/trend', (req, res) => {
+  const days = req.query.days ? Number(req.query.days) : 30;
+  const window = Number.isFinite(days) && days > 0 ? Math.min(days, 365) : 30;
+  const since = Date.now() - window * 24 * 60 * 60 * 1000;
+  res.json({ enabled: isPersistEnabled(), points: getTrend(since) });
+});
+
 api.get('/notify/status', (_req, res) => {
   res.json(notifier.status());
 });
 
+// STIX 2.1 bundle export for sharing with MISP / OpenCTI / SIEMs.
+api.get('/export/stix', (_req, res) => {
+  const bundle = buildStixBundle(store.getIndicators(), store.getAllCves());
+  res.setHeader('Content-Disposition', 'attachment; filename="threat-intel-stix.json"');
+  res.json(bundle);
+});
+
 // Manually trigger a digest push to all configured channels (DingTalk / Telegram).
-api.post('/notify/test', (_req, res) => {
+// Guarded: this endpoint sends real messages, so it must not be open to the world.
+// - If NOTIFY_TEST_TOKEN is set, the caller must supply it (x-notify-token header or ?token=).
+// - If it is not set, the route is allowed only outside production.
+const NOTIFY_TEST_TOKEN = process.env.NOTIFY_TEST_TOKEN?.trim() || null;
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+api.post('/notify/test', (req, res) => {
+  if (NOTIFY_TEST_TOKEN) {
+    const provided =
+      (typeof req.headers['x-notify-token'] === 'string' ? req.headers['x-notify-token'] : '') ||
+      (typeof req.query.token === 'string' ? req.query.token : '');
+    if (provided !== NOTIFY_TEST_TOKEN) {
+      res.status(401).json({ error: 'unauthorized: invalid or missing notify test token' });
+      return;
+    }
+  } else if (IS_PRODUCTION) {
+    res.status(403).json({ error: 'forbidden: set NOTIFY_TEST_TOKEN to enable this endpoint' });
+    return;
+  }
   notifier
     .sendTest()
     .then((out) => res.json(out))
@@ -69,6 +133,11 @@ api.post('/notify/test', (_req, res) => {
 });
 
 app.use('/api', api);
+
+// Unknown /api/* routes return JSON 404 (not the SPA shell).
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: 'not found' });
+});
 
 // Serve the built frontend if present (single-process production deploy).
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -80,7 +149,18 @@ if (fs.existsSync(frontendDist)) {
   });
 }
 
+// Global error handler: never leak stack traces, always return JSON.
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error(`[server] unhandled error: ${errorMessage(err)}`);
+  if (res.headersSent) return;
+  res.status(500).json({ error: 'internal server error' });
+});
+
 async function bootstrap(): Promise<void> {
+  // Open persistence first (no-op unless DATA_DIR is set) so the first refresh can
+  // hydrate the geo cache and record first/last-seen.
+  initPersistence();
+
   app.listen(PORT, () => {
     console.log(`[server] threat-intel-platform API listening on :${PORT}`);
   });

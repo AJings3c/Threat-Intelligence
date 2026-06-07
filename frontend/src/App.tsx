@@ -62,6 +62,21 @@ export default function App() {
     return () => clearInterval(id);
   }, [loadOverview, loadCves]);
 
+  // Live push updates via SSE; the interval above remains as a fallback.
+  useEffect(() => {
+    const base = import.meta.env.VITE_API_BASE ?? '';
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource(`${base}/api/stream`);
+      es.addEventListener('refresh', () => {
+        void loadOverview();
+      });
+    } catch {
+      // EventSource unavailable; polling still keeps the dashboard fresh.
+    }
+    return () => es?.close();
+  }, [loadOverview]);
+
   // Debounced threats query whenever filters change.
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {

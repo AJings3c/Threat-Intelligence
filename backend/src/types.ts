@@ -31,6 +31,10 @@ export interface ThreatIndicator {
   reference?: string;
   firstSeen?: string;
   lastSeen?: string;
+  // All sources reporting this indicator (>=2 means cross-source corroboration).
+  sources?: ThreatSource[];
+  // Derived 0-100 confidence: more independent sources + higher severity => higher.
+  confidence?: number;
 }
 
 export interface CveItem {

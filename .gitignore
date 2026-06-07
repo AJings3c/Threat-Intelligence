@@ -9,3 +9,8 @@ npm-debug.log*
 coverage/
 .vite/
 .cache/
+
+# Local SQLite persistence + test scratch dirs
+data/
+*.db
+.tmp-persist-test-*/

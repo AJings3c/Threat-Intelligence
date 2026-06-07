@@ -5,12 +5,24 @@ import type {
   ThreatSource,
   Severity,
   ThreatType,
+  FetchResult,
 } from './types.js';
 import { fetchCisaKev } from './sources/cisaKev.js';
 import { fetchFeodo } from './sources/feodo.js';
 import { fetchUrlhaus } from './sources/urlhaus.js';
 import { fetchNvd } from './sources/nvd.js';
 import { geolocate, isIpv4 } from './geo.js';
+import { dedupeIndicators } from './correlate.js';
+import { recordSeen, recordSnapshot } from './persist.js';
+
+// Hard server-side cap so a client can't request an unbounded result set.
+export const MAX_QUERY_LIMIT = 2000;
+
+// Clamp a requested limit into [1, MAX_QUERY_LIMIT], falling back to a default.
+export function clampLimit(limit: number | undefined, fallback: number): number {
+  if (limit === undefined || !Number.isFinite(limit) || limit <= 0) return fallback;
+  return Math.min(Math.floor(limit), MAX_QUERY_LIMIT);
+}
 
 export const SOURCE_LABELS: Record<ThreatSource, string> = {
   cisa_kev: 'CISA KEV',
@@ -20,14 +32,25 @@ export const SOURCE_LABELS: Record<ThreatSource, string> = {
 };
 
 interface SourceState {
+  // Timestamp of the last SUCCESSFUL fetch (drives staleness/age).
   fetchedAt: number | null;
+  // Error from the most recent attempt (null when the last attempt succeeded).
   error: string | null;
   count: number;
 }
 
+// IOC feeds (everything except NVD, which produces standalone CVEs).
+type IocSource = Exclude<ThreatSource, 'nvd'>;
+
 class ThreatStore {
   private indicators: ThreatIndicator[] = [];
   private cves: CveItem[] = [];
+  // Last-good items retained per source so a transient feed failure doesn't wipe data.
+  private iocItems: Record<IocSource, ThreatIndicator[]> = {
+    cisa_kev: [],
+    feodo: [],
+    urlhaus: [],
+  };
   private state: Record<ThreatSource, SourceState> = {
     cisa_kev: { fetchedAt: null, error: null, count: 0 },
     feodo: { fetchedAt: null, error: null, count: 0 },
@@ -36,9 +59,17 @@ class ThreatStore {
   };
   private refreshing = false;
   private lastRefresh = 0;
+  // Listeners notified after each successful refresh (used for SSE streaming).
+  private refreshListeners = new Set<() => void>();
 
   get lastRefreshAt(): number {
     return this.lastRefresh;
+  }
+
+  // Subscribe to refresh events. Returns an unsubscribe function.
+  onRefresh(listener: () => void): () => void {
+    this.refreshListeners.add(listener);
+    return () => this.refreshListeners.delete(listener);
   }
 
   get isReady(): boolean {
@@ -56,25 +87,108 @@ class ThreatStore {
         fetchNvd(),
       ]);
 
-      const indicators = [...kev.items, ...feodo.items, ...urlhaus.items];
+      this.applyIocResult('cisa_kev', kev);
+      this.applyIocResult('feodo', feodo);
+      this.applyIocResult('urlhaus', urlhaus);
+      this.applyCveResult(nvd);
+
+      // Merge across sources so a repeated indicator becomes one record with a
+      // corroboration-based confidence score instead of duplicate map points.
+      const indicators = dedupeIndicators([
+        ...this.iocItems.cisa_kev,
+        ...this.iocItems.feodo,
+        ...this.iocItems.urlhaus,
+      ]);
       await this.enrichGeo(indicators);
-
       this.indicators = indicators;
-      this.cves = nvd.items;
 
-      this.state.cisa_kev = { fetchedAt: kev.fetchedAt, error: kev.error, count: kev.items.length };
-      this.state.feodo = { fetchedAt: feodo.fetchedAt, error: feodo.error, count: feodo.items.length };
-      this.state.urlhaus = {
-        fetchedAt: urlhaus.fetchedAt,
-        error: urlhaus.error,
-        count: urlhaus.items.length,
-      };
-      this.state.nvd = { fetchedAt: nvd.fetchedAt, error: nvd.error, count: nvd.items.length };
+      // Cross-mark CVEs already in CISA KEV as known-exploited.
+      this.correlateKev();
+
+      // Persist first/last-seen + a trend snapshot (no-op unless DATA_DIR is set).
+      this.persistObservations();
 
       this.lastRefresh = Date.now();
     } finally {
       this.refreshing = false;
     }
+    for (const listener of this.refreshListeners) {
+      try {
+        listener();
+      } catch {
+        // a misbehaving listener must not break the refresh cycle
+      }
+    }
+  }
+
+  // Replace a source's retained items only when the fetch succeeded; otherwise keep
+  // the last-good data and record the error so the source shows as stale, not empty.
+  private applyIocResult(source: IocSource, result: FetchResult<ThreatIndicator>): void {
+    if (result.error === null) {
+      this.iocItems[source] = result.items;
+      this.state[source] = { fetchedAt: result.fetchedAt, error: null, count: result.items.length };
+    } else {
+      this.state[source] = {
+        fetchedAt: this.state[source].fetchedAt,
+        error: result.error,
+        count: this.iocItems[source].length,
+      };
+    }
+  }
+
+  private applyCveResult(result: FetchResult<CveItem>): void {
+    if (result.error === null) {
+      this.cves = result.items;
+      this.state.nvd = { fetchedAt: result.fetchedAt, error: null, count: result.items.length };
+    } else {
+      this.state.nvd = {
+        fetchedAt: this.state.nvd.fetchedAt,
+        error: result.error,
+        count: this.cves.length,
+      };
+    }
+  }
+
+  // Mark NVD CVEs that appear in the CISA KEV catalog as known-exploited and raise severity.
+  private correlateKev(): void {
+    const kevCves = new Set(this.iocItems.cisa_kev.map((t) => t.indicator));
+    for (const c of this.cves) {
+      if (kevCves.has(c.id)) {
+        c.knownExploited = true;
+        if (c.severity !== 'critical') c.severity = 'high';
+      }
+    }
+  }
+
+  private keyOf(t: ThreatIndicator): string {
+    return `${t.indicatorType}:${t.indicator.toLowerCase()}`;
+  }
+
+  // Record observations and a severity snapshot. recordSeen returns the persisted
+  // first-seen per key so firstSeen stays stable across restarts.
+  private persistObservations(): void {
+    const nowIso = new Date().toISOString();
+    const firstSeen = recordSeen(
+      this.indicators.map((t) => this.keyOf(t)),
+      nowIso,
+    );
+    if (firstSeen.size > 0) {
+      for (const t of this.indicators) {
+        const seen = firstSeen.get(this.keyOf(t));
+        if (!seen) continue;
+        t.firstSeen = t.firstSeen && t.firstSeen < seen ? t.firstSeen : seen;
+        t.lastSeen = nowIso;
+      }
+    }
+    const sev = this.getStats().bySeverity;
+    recordSnapshot({
+      ts: Date.now(),
+      total: this.indicators.length,
+      critical: sev.critical ?? 0,
+      high: sev.high ?? 0,
+      medium: sev.medium ?? 0,
+      low: sev.low ?? 0,
+    });
   }
 
   // Extract an IPv4 from an indicator for map plotting, then geolocate in bulk.
@@ -136,12 +250,12 @@ class ThreatStore {
       );
     }
     const total = list.length;
-    const limit = opts.limit ?? 500;
+    const limit = clampLimit(opts.limit, 500);
     return { threats: list.slice(0, limit), total };
   }
 
   getCves(limit = 60): { cves: CveItem[]; total: number } {
-    return { cves: this.cves.slice(0, limit), total: this.cves.length };
+    return { cves: this.cves.slice(0, clampLimit(limit, 60)), total: this.cves.length };
   }
 
   // Full snapshots used by the alert notifier (no limit applied).

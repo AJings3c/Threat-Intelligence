@@ -1,0 +1,15 @@
+node_modules
+**/node_modules
+**/dist
+build
+.git
+.github
+*.log
+.env
+.env.local
+coverage
+.vite
+.cache
+data
+*.db
+.tmp-persist-test-*

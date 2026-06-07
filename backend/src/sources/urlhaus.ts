@@ -24,10 +24,15 @@ export async function fetchUrlhaus(limit = 1500): Promise<FetchResult<ThreatIndi
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as UrlhausResponse;
 
+    // Object key order is not guaranteed chronological; sort by dateadded (newest first)
+    // before applying the cap so we keep the most recent malicious URLs.
+    const entries = Object.entries(data)
+      .map(([id, arr]) => ({ id, entry: arr?.[0] }))
+      .filter((e): e is { id: string; entry: UrlhausEntry } => Boolean(e.entry))
+      .sort((a, b) => (b.entry.dateadded ?? '').localeCompare(a.entry.dateadded ?? ''));
+
     const items: ThreatIndicator[] = [];
-    for (const id of Object.keys(data)) {
-      const entry = data[id]?.[0];
-      if (!entry) continue;
+    for (const { id, entry } of entries) {
       const online = (entry.url_status ?? '').toLowerCase() === 'online';
       items.push({
         id: `urlhaus:${id}`,
