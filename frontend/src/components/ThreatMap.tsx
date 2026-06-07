@@ -2,8 +2,11 @@ import { useMemo } from 'react';
 import { ComposableMap, Geographies, Geography, Marker } from 'react-simple-maps';
 import type { ThreatIndicator } from '../types';
 import { SEVERITY_COLORS } from '../constants';
+// Bundle the basemap locally instead of fetching from a CDN at runtime, so the map
+// works in air-gapped / internal deployments and is reproducible.
+import countries110m from 'world-atlas/countries-110m.json';
 
-const GEO_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
+const GEO_DATA = countries110m as unknown as Record<string, unknown>;
 
 const MAX_MARKERS = 600;
 
@@ -25,7 +28,7 @@ export function ThreatMap({ points }: { points: ThreatIndicator[] }) {
         height={420}
         style={{ width: '100%', height: 'auto' }}
       >
-        <Geographies geography={GEO_URL}>
+        <Geographies geography={GEO_DATA}>
           {({ geographies }) =>
             geographies.map((geo) => (
               <Geography
