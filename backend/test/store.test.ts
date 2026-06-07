@@ -30,12 +30,13 @@ const mockFeodo = fetchFeodo as ReturnType<typeof vi.fn>;
 const mockUrlhaus = fetchUrlhaus as ReturnType<typeof vi.fn>;
 const mockNvd = fetchNvd as ReturnType<typeof vi.fn>;
 
+// Distinct indicator value per id so cross-source dedup keeps them separate.
 function indicator(id: string, source: 'cisa_kev' | 'feodo' | 'urlhaus'): ThreatIndicator {
   return {
     id,
     source,
     type: 'c2_server',
-    indicator: '1.2.3.4',
+    indicator: `ip-${id}`,
     indicatorType: 'ip',
     severity: 'high',
     tags: [],

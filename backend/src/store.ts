@@ -12,6 +12,7 @@ import { fetchFeodo } from './sources/feodo.js';
 import { fetchUrlhaus } from './sources/urlhaus.js';
 import { fetchNvd } from './sources/nvd.js';
 import { geolocate, isIpv4 } from './geo.js';
+import { dedupeIndicators } from './correlate.js';
 
 // Hard server-side cap so a client can't request an unbounded result set.
 export const MAX_QUERY_LIMIT = 2000;
@@ -82,11 +83,13 @@ class ThreatStore {
       this.applyIocResult('urlhaus', urlhaus);
       this.applyCveResult(nvd);
 
-      const indicators = [
+      // Merge across sources so a repeated indicator becomes one record with a
+      // corroboration-based confidence score instead of duplicate map points.
+      const indicators = dedupeIndicators([
         ...this.iocItems.cisa_kev,
         ...this.iocItems.feodo,
         ...this.iocItems.urlhaus,
-      ];
+      ]);
       await this.enrichGeo(indicators);
       this.indicators = indicators;
 
