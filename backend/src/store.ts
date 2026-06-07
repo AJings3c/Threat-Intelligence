@@ -13,6 +13,15 @@ import { fetchUrlhaus } from './sources/urlhaus.js';
 import { fetchNvd } from './sources/nvd.js';
 import { geolocate, isIpv4 } from './geo.js';
 
+// Hard server-side cap so a client can't request an unbounded result set.
+export const MAX_QUERY_LIMIT = 2000;
+
+// Clamp a requested limit into [1, MAX_QUERY_LIMIT], falling back to a default.
+export function clampLimit(limit: number | undefined, fallback: number): number {
+  if (limit === undefined || !Number.isFinite(limit) || limit <= 0) return fallback;
+  return Math.min(Math.floor(limit), MAX_QUERY_LIMIT);
+}
+
 export const SOURCE_LABELS: Record<ThreatSource, string> = {
   cisa_kev: 'CISA KEV',
   feodo: 'abuse.ch Feodo Tracker',
@@ -188,12 +197,12 @@ class ThreatStore {
       );
     }
     const total = list.length;
-    const limit = opts.limit ?? 500;
+    const limit = clampLimit(opts.limit, 500);
     return { threats: list.slice(0, limit), total };
   }
 
   getCves(limit = 60): { cves: CveItem[]; total: number } {
-    return { cves: this.cves.slice(0, limit), total: this.cves.length };
+    return { cves: this.cves.slice(0, clampLimit(limit, 60)), total: this.cves.length };
   }
 
   // Full snapshots used by the alert notifier (no limit applied).

@@ -55,7 +55,13 @@ export async function fetchNvd(limit = 60, days = 14): Promise<FetchResult<CveIt
       pubEndDate: isoDate(end),
       resultsPerPage: String(Math.min(limit, 200)),
     });
-    const res = await fetchWithTimeout(`${NVD_URL}?${params.toString()}`, {}, 30_000);
+    // An NVD API key raises the rate limit from 5 to 50 requests / 30s.
+    const apiKey = process.env.NVD_API_KEY?.trim();
+    const res = await fetchWithTimeout(
+      `${NVD_URL}?${params.toString()}`,
+      apiKey ? { headers: { apiKey } } : {},
+      30_000,
+    );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as NvdResponse;
     const vulns = data.vulnerabilities ?? [];

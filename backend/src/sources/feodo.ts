@@ -23,7 +23,12 @@ export async function fetchFeodo(limit = 1000): Promise<FetchResult<ThreatIndica
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as FeodoEntry[];
 
-    const items: ThreatIndicator[] = data.slice(0, limit).map((e) => ({
+    // Newest first (prefer last_online, fall back to first_seen) so the cap keeps recent C2s.
+    const sorted = [...data].sort((a, b) =>
+      (b.last_online ?? b.first_seen ?? '').localeCompare(a.last_online ?? a.first_seen ?? ''),
+    );
+
+    const items: ThreatIndicator[] = sorted.slice(0, limit).map((e) => ({
       id: `feodo:${e.ip_address}:${e.port ?? 0}`,
       source: 'feodo',
       type: 'c2_server',

@@ -88,6 +88,11 @@ api.post('/notify/test', (req, res) => {
 
 app.use('/api', api);
 
+// Unknown /api/* routes return JSON 404 (not the SPA shell).
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: 'not found' });
+});
+
 // Serve the built frontend if present (single-process production deploy).
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const frontendDist = path.resolve(__dirname, '../../frontend/dist');
@@ -97,6 +102,13 @@ if (fs.existsSync(frontendDist)) {
     res.sendFile(path.join(frontendDist, 'index.html'));
   });
 }
+
+// Global error handler: never leak stack traces, always return JSON.
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error(`[server] unhandled error: ${errorMessage(err)}`);
+  if (res.headersSent) return;
+  res.status(500).json({ error: 'internal server error' });
+});
 
 async function bootstrap(): Promise<void> {
   app.listen(PORT, () => {
