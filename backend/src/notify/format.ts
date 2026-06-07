@@ -57,3 +57,27 @@ export function buildDigest(items: AlertItem[], generatedAt = new Date()): Diges
 
   return { title, markdown: mdLines.join('\n'), text: txtLines.join('\n') };
 }
+
+// A digest describing a source health transition (feed went down / recovered).
+export function buildSourceAlert(
+  kind: 'down' | 'recovered',
+  source: { label: string; lastError: string | null; count: number },
+  generatedAt = new Date(),
+): DigestContent {
+  const ts = generatedAt.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  if (kind === 'down') {
+    const title = `Source health · ${source.label} is failing`;
+    const reason = source.lastError ?? 'unknown error';
+    return {
+      title,
+      markdown: `#### ⚠️ ${title}\n> ${ts}\n\nLast error: \`${escapeMd(reason)}\`\nServing ${source.count} cached indicator(s).`,
+      text: `${title} (${ts})\nLast error: ${reason}\nServing ${source.count} cached indicator(s).`,
+    };
+  }
+  const title = `Source health · ${source.label} recovered`;
+  return {
+    title,
+    markdown: `#### ✅ ${title}\n> ${ts}\n\nNow serving ${source.count} indicator(s).`,
+    text: `${title} (${ts})\nNow serving ${source.count} indicator(s).`,
+  };
+}

@@ -4,12 +4,14 @@ import type {
   MapResponse,
   CveResponse,
   SourceHealth,
+  TrendResponse,
 } from './types';
 
 const BASE = import.meta.env.VITE_API_BASE ?? '';
+const TOKEN = import.meta.env.VITE_API_TOKEN;
 
 async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
+  const res = await fetch(`${BASE}${path}`, TOKEN ? { headers: { 'x-api-token': TOKEN } } : undefined);
   if (!res.ok) throw new Error(`Request failed: ${res.status}`);
   return (await res.json()) as T;
 }
@@ -47,4 +49,8 @@ export function fetchCves(limit = 40): Promise<CveResponse> {
 
 export function fetchHealth(): Promise<{ sources: SourceHealth[] }> {
   return getJson<{ sources: SourceHealth[] }>('/api/sources/health');
+}
+
+export function fetchTrend(days = 30): Promise<TrendResponse> {
+  return getJson<TrendResponse>(`/api/trend?days=${days}`);
 }

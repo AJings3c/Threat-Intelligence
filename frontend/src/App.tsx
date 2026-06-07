@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CveItem, SourceHealth, Stats, ThreatIndicator } from './types';
-import { fetchCves, fetchHealth, fetchMap, fetchStats, fetchThreats } from './api';
+import type { CveItem, SourceHealth, Stats, ThreatIndicator, TrendPoint } from './types';
+import { fetchCves, fetchHealth, fetchMap, fetchStats, fetchThreats, fetchTrend } from './api';
 import { StatsCards } from './components/StatsCards';
 import { ThreatMap } from './components/ThreatMap';
 import { Filters, type FilterState } from './components/Filters';
 import { ThreatTable } from './components/ThreatTable';
 import { CvePanel } from './components/CvePanel';
 import { SourceHealthBar } from './components/SourceHealthBar';
+import { TrendChart } from './components/TrendChart';
 
 const REFRESH_MS = 60_000;
 
@@ -15,6 +16,10 @@ export default function App() {
   const [points, setPoints] = useState<ThreatIndicator[]>([]);
   const [cves, setCves] = useState<CveItem[]>([]);
   const [health, setHealth] = useState<SourceHealth[]>([]);
+  const [trend, setTrend] = useState<{ enabled: boolean; points: TrendPoint[] }>({
+    enabled: false,
+    points: [],
+  });
   const [threats, setThreats] = useState<ThreatIndicator[]>([]);
   const [total, setTotal] = useState(0);
   const [threatsLoading, setThreatsLoading] = useState(true);
@@ -30,10 +35,16 @@ export default function App() {
 
   const loadOverview = useCallback(async () => {
     try {
-      const [s, m, h] = await Promise.all([fetchStats(), fetchMap(), fetchHealth()]);
+      const [s, m, h, t] = await Promise.all([
+        fetchStats(),
+        fetchMap(),
+        fetchHealth(),
+        fetchTrend(),
+      ]);
       setStats(s);
       setPoints(m.points);
       setHealth(h.sources);
+      setTrend({ enabled: t.enabled, points: t.points });
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load overview');
@@ -65,9 +76,11 @@ export default function App() {
   // Live push updates via SSE; the interval above remains as a fallback.
   useEffect(() => {
     const base = import.meta.env.VITE_API_BASE ?? '';
+    const token = import.meta.env.VITE_API_TOKEN;
     let es: EventSource | null = null;
     try {
-      es = new EventSource(`${base}/api/stream`);
+      // EventSource can't set headers, so the token (when present) rides as a query param.
+      es = new EventSource(`${base}/api/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`);
       es.addEventListener('refresh', () => {
         void loadOverview();
       });
@@ -151,6 +164,10 @@ export default function App() {
         <div>
           <CvePanel cves={cves} loading={cvesLoading} />
         </div>
+      </div>
+
+      <div className="mb-5">
+        <TrendChart enabled={trend.enabled} points={trend.points} />
       </div>
 
       <div className="mb-3">
