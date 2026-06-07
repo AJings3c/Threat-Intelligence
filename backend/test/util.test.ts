@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cvssToSeverity, errorMessage } from '../src/util.js';
+import { cvssToSeverity, errorMessage, extractToken } from '../src/util.js';
 
 describe('cvssToSeverity', () => {
   it('maps CVSS bands to severities', () => {
@@ -24,5 +24,23 @@ describe('errorMessage', () => {
     expect(errorMessage(new Error('boom'))).toBe('boom');
     expect(errorMessage('plain')).toBe('plain');
     expect(errorMessage(42)).toBe('42');
+  });
+});
+
+describe('extractToken', () => {
+  it('reads a Bearer token, falling back to header then query', () => {
+    expect(extractToken('Bearer abc', undefined, undefined)).toBe('abc');
+    expect(extractToken(undefined, 'hdr', undefined)).toBe('hdr');
+    expect(extractToken(undefined, undefined, 'qry')).toBe('qry');
+  });
+
+  it('prefers Authorization over header over query', () => {
+    expect(extractToken('Bearer a', 'b', 'c')).toBe('a');
+    expect(extractToken(undefined, 'b', 'c')).toBe('b');
+  });
+
+  it('returns empty string when nothing is provided or scheme is wrong', () => {
+    expect(extractToken(undefined, undefined, undefined)).toBe('');
+    expect(extractToken('Basic xyz', undefined, undefined)).toBe('');
   });
 });

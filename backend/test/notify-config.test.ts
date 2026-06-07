@@ -71,4 +71,10 @@ describe('loadNotifyConfig', () => {
     expect(cfg.minSeverity).toBe('critical');
     expect(cfg.seenMax).toBe(1000);
   });
+
+  it('defaults sourceAlertThreshold to 2 with a floor of 1', () => {
+    expect(loadNotifyConfig({ ...base }).sourceAlertThreshold).toBe(2);
+    expect(loadNotifyConfig({ ...base, SOURCE_ALERT_THRESHOLD: '0' }).sourceAlertThreshold).toBe(1);
+    expect(loadNotifyConfig({ ...base, SOURCE_ALERT_THRESHOLD: '5' }).sourceAlertThreshold).toBe(5);
+  });
 });

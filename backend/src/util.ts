@@ -36,3 +36,16 @@ export function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
 }
+
+// Pull an API credential from a request's Authorization (Bearer) header,
+// X-Api-Token header, or ?token= query param, in that order.
+export function extractToken(
+  authorization: string | undefined,
+  xApiToken: string | undefined,
+  queryToken: string | undefined,
+): string {
+  if (authorization && authorization.startsWith('Bearer ')) return authorization.slice(7).trim();
+  if (xApiToken) return xApiToken.trim();
+  if (queryToken) return queryToken;
+  return '';
+}

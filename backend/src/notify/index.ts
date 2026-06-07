@@ -1,7 +1,8 @@
-import type { Severity } from '../types.js';
+import type { Severity, SourceHealth } from '../types.js';
 import { store, SOURCE_LABELS } from '../store.js';
 import { loadNotifyConfig, severityRank, type NotifyConfig } from './config.js';
-import { buildDigest, type AlertItem } from './format.js';
+import { buildDigest, buildSourceAlert, type AlertItem, type DigestContent } from './format.js';
+import { reduceHealth, emptyHealthState, type HealthAlertState } from './health.js';
 import { sendDingtalk } from './dingtalk.js';
 import { sendTelegram } from './telegram.js';
 import { sendSlack, sendWebhook } from './webhook.js';
@@ -29,6 +30,8 @@ class Notifier {
   private lastRunAt = 0;
   private lastSentCount = 0;
   private lastResult: Record<string, string> | null = null;
+  // Source health alerting: track failure streaks / down state across refreshes.
+  private healthState: HealthAlertState = emptyHealthState();
 
   get isEnabled(): boolean {
     return this.config.enabled;
@@ -197,6 +200,46 @@ class Notifier {
     }
     this.lastResult = result;
     return { sent: items.length, result };
+  }
+
+  // Send one digest to every configured channel.
+  private async dispatch(content: DigestContent): Promise<Record<string, string>> {
+    const result: Record<string, string> = {};
+    if (this.config.dingtalk) {
+      const r = await sendDingtalk(this.config.dingtalk, content);
+      result.dingtalk = r.ok ? 'ok' : `error: ${r.error}`;
+    }
+    if (this.config.telegram) {
+      const r = await sendTelegram(this.config.telegram, content);
+      result.telegram = r.ok ? 'ok' : `error: ${r.error}`;
+    }
+    if (this.config.slack) {
+      const r = await sendSlack(this.config.slack.webhook, content);
+      result.slack = r.ok ? 'ok' : `error: ${r.error}`;
+    }
+    if (this.config.webhook) {
+      const r = await sendWebhook(this.config.webhook.url, content);
+      result.webhook = r.ok ? 'ok' : `error: ${r.error}`;
+    }
+    return result;
+  }
+
+  /** Push an alert when a source crosses the failure threshold or recovers. */
+  async checkSourceHealth(health: SourceHealth[]): Promise<void> {
+    if (!this.config.enabled) return;
+    const { state, fire } = reduceHealth(
+      this.healthState,
+      health.map((h) => ({ source: h.source, lastError: h.lastError })),
+      this.config.sourceAlertThreshold,
+    );
+    this.healthState = state;
+    for (const f of fire) {
+      const h = health.find((x) => x.source === f.source);
+      if (!h) continue;
+      await this.dispatch(
+        buildSourceAlert(f.kind, { label: h.label, lastError: h.lastError, count: h.count }),
+      );
+    }
   }
 
   start(): void {

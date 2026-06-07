@@ -6,12 +6,23 @@ import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { store } from './store.js';
 import { notifier } from './notify/index.js';
-import { errorMessage } from './util.js';
+import { errorMessage, extractToken } from './util.js';
 import { initPersistence, getTrend, isPersistEnabled } from './persist.js';
 import { buildStixBundle } from './stix.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS ?? 15 * 60 * 1000);
+
+// Optional API auth. When API_TOKEN is set, all /api routes (except /health) require it.
+// A static token suits machine/SIEM access or a private deployment; a browser SPA cannot
+// keep it truly secret, so for public dashboards put a real auth proxy in front.
+const API_TOKEN = process.env.API_TOKEN?.trim() || null;
+const tokenOf = (req: express.Request): string =>
+  extractToken(
+    typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined,
+    typeof req.headers['x-api-token'] === 'string' ? req.headers['x-api-token'] : undefined,
+    typeof req.query.token === 'string' ? req.query.token : undefined,
+  );
 
 const app = express();
 app.use(cors());
@@ -19,6 +30,10 @@ app.use(cors());
 // Server-Sent Events stream for live updates. Registered BEFORE compression so the
 // long-lived response is not buffered. Emits a `refresh` event after each feed refresh.
 app.get('/api/stream', (req, res) => {
+  if (API_TOKEN && tokenOf(req) !== API_TOKEN) {
+    res.status(401).json({ error: 'unauthorized: invalid or missing API token' });
+    return;
+  }
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -48,6 +63,21 @@ app.use(compression());
 app.use(express.json());
 
 const api = express.Router();
+
+// Gate every /api route behind the token when configured; /health stays open for probes.
+if (API_TOKEN) {
+  api.use((req, res, next) => {
+    if (req.path === '/health') {
+      next();
+      return;
+    }
+    if (tokenOf(req) === API_TOKEN) {
+      next();
+      return;
+    }
+    res.status(401).json({ error: 'unauthorized: invalid or missing API token' });
+  });
+}
 
 api.get('/health', (_req, res) => {
   res.json({
@@ -175,6 +205,7 @@ async function bootstrap(): Promise<void> {
     );
     // Prime the alert baseline against the initial dataset so we only push new threats later.
     await notifier.runOnce();
+    await notifier.checkSourceHealth(store.getHealth());
   } catch (err) {
     console.error(`[server] initial refresh failed: ${errorMessage(err)}`);
   }
@@ -185,7 +216,10 @@ async function bootstrap(): Promise<void> {
   setInterval(() => {
     store
       .refresh()
-      .then(() => console.log('[server] feeds refreshed'))
+      .then(() => {
+        console.log('[server] feeds refreshed');
+        return notifier.checkSourceHealth(store.getHealth());
+      })
       .catch((err) => console.error(`[server] refresh failed: ${errorMessage(err)}`));
   }, REFRESH_INTERVAL_MS);
 }
