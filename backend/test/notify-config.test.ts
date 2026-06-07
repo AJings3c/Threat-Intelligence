@@ -34,6 +34,16 @@ describe('loadNotifyConfig', () => {
     expect(cfg.telegram).toEqual({ botToken: 'bot', chatId: '42' });
   });
 
+  it('enables via a Slack or generic webhook channel', () => {
+    const slack = loadNotifyConfig({ ...base, NOTIFY_ENABLED: 'true', SLACK_WEBHOOK: 'https://hooks.slack.com/x' });
+    expect(slack.enabled).toBe(true);
+    expect(slack.slack).toEqual({ webhook: 'https://hooks.slack.com/x' });
+
+    const hook = loadNotifyConfig({ ...base, NOTIFY_ENABLED: 'true', WEBHOOK_URL: 'https://siem.example/ingest' });
+    expect(hook.enabled).toBe(true);
+    expect(hook.webhook).toEqual({ url: 'https://siem.example/ingest' });
+  });
+
   it('normalizes a bare DingTalk access_token into a full webhook URL', () => {
     const cfg = loadNotifyConfig({ ...base, DINGTALK_WEBHOOK: 'abc' });
     expect(cfg.dingtalk?.webhook).toBe(

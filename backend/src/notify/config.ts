@@ -1,6 +1,6 @@
 import type { Severity, ThreatSource } from '../types.js';
 
-export type NotifyChannel = 'dingtalk' | 'telegram';
+export type NotifyChannel = 'dingtalk' | 'telegram' | 'slack' | 'webhook';
 
 export interface NotifyConfig {
   enabled: boolean;
@@ -12,6 +12,8 @@ export interface NotifyConfig {
   seenMax: number;
   dingtalk: { webhook: string; secret: string | null } | null;
   telegram: { botToken: string; chatId: string } | null;
+  slack: { webhook: string } | null;
+  webhook: { url: string } | null;
 }
 
 const SEVERITY_RANK: Record<Severity, number> = { low: 0, medium: 1, high: 2, critical: 3 };
@@ -53,11 +55,16 @@ export function loadNotifyConfig(env: NodeJS.ProcessEnv = process.env): NotifyCo
   const telegram =
     telegramToken && telegramChat ? { botToken: telegramToken, chatId: telegramChat } : null;
 
+  const slackRaw = env.SLACK_WEBHOOK?.trim();
+  const slack = slackRaw ? { webhook: slackRaw } : null;
+  const webhookRaw = env.WEBHOOK_URL?.trim();
+  const webhook = webhookRaw ? { url: webhookRaw } : null;
+
   // The feature is "on" only when explicitly enabled AND at least one channel is configured.
   const flagEnabled = (env.NOTIFY_ENABLED ?? '').toLowerCase() === 'true';
 
   return {
-    enabled: flagEnabled && Boolean(dingtalk || telegram),
+    enabled: flagEnabled && Boolean(dingtalk || telegram || slack || webhook),
     intervalMs: Number(env.NOTIFY_INTERVAL_MS ?? 60 * 60 * 1000),
     minSeverity: parseSeverity(env.NOTIFY_MIN_SEVERITY),
     sources: parseSources(env.NOTIFY_SOURCES),
@@ -65,5 +72,7 @@ export function loadNotifyConfig(env: NodeJS.ProcessEnv = process.env): NotifyCo
     seenMax: Math.max(1000, Number(env.NOTIFY_SEEN_MAX ?? 50_000)),
     dingtalk,
     telegram,
+    slack,
+    webhook,
   };
 }

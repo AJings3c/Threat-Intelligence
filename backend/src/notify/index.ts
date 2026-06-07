@@ -4,11 +4,12 @@ import { loadNotifyConfig, severityRank, type NotifyConfig } from './config.js';
 import { buildDigest, type AlertItem } from './format.js';
 import { sendDingtalk } from './dingtalk.js';
 import { sendTelegram } from './telegram.js';
+import { sendSlack, sendWebhook } from './webhook.js';
 import { errorMessage } from '../util.js';
 
 export interface NotifierStatus {
   enabled: boolean;
-  channels: { dingtalk: boolean; telegram: boolean };
+  channels: { dingtalk: boolean; telegram: boolean; slack: boolean; webhook: boolean };
   minSeverity: Severity;
   intervalMs: number;
   sources: string[] | null;
@@ -123,6 +124,14 @@ class Notifier {
       const r = await sendTelegram(this.config.telegram, digest);
       result.telegram = r.ok ? 'ok' : `error: ${r.error}`;
     }
+    if (this.config.slack) {
+      const r = await sendSlack(this.config.slack.webhook, digest);
+      result.slack = r.ok ? 'ok' : `error: ${r.error}`;
+    }
+    if (this.config.webhook) {
+      const r = await sendWebhook(this.config.webhook.url, digest);
+      result.webhook = r.ok ? 'ok' : `error: ${r.error}`;
+    }
 
     // Mark all candidates seen (not just the truncated batch) so the next digest moves forward.
     this.markSeen(candidates);
@@ -174,8 +183,17 @@ class Notifier {
       const r = await sendTelegram(this.config.telegram, digest);
       result.telegram = r.ok ? 'ok' : `error: ${r.error}`;
     }
-    if (!this.config.dingtalk && !this.config.telegram) {
-      result.none = 'no channel configured (set DINGTALK_WEBHOOK and/or TELEGRAM_BOT_TOKEN)';
+    if (this.config.slack) {
+      const r = await sendSlack(this.config.slack.webhook, digest);
+      result.slack = r.ok ? 'ok' : `error: ${r.error}`;
+    }
+    if (this.config.webhook) {
+      const r = await sendWebhook(this.config.webhook.url, digest);
+      result.webhook = r.ok ? 'ok' : `error: ${r.error}`;
+    }
+    if (!this.config.dingtalk && !this.config.telegram && !this.config.slack && !this.config.webhook) {
+      result.none =
+        'no channel configured (set DINGTALK_WEBHOOK, TELEGRAM_BOT_TOKEN, SLACK_WEBHOOK, or WEBHOOK_URL)';
     }
     this.lastResult = result;
     return { sent: items.length, result };
@@ -189,6 +207,8 @@ class Notifier {
     const channels = [
       this.config.dingtalk ? 'dingtalk' : null,
       this.config.telegram ? 'telegram' : null,
+      this.config.slack ? 'slack' : null,
+      this.config.webhook ? 'webhook' : null,
     ].filter(Boolean);
     console.log(
       `[notify] enabled · channels=${channels.join(',')} · minSeverity=${this.config.minSeverity} · interval=${this.config.intervalMs}ms`,
@@ -206,7 +226,12 @@ class Notifier {
   status(): NotifierStatus {
     return {
       enabled: this.config.enabled,
-      channels: { dingtalk: Boolean(this.config.dingtalk), telegram: Boolean(this.config.telegram) },
+      channels: {
+        dingtalk: Boolean(this.config.dingtalk),
+        telegram: Boolean(this.config.telegram),
+        slack: Boolean(this.config.slack),
+        webhook: Boolean(this.config.webhook),
+      },
       minSeverity: this.config.minSeverity,
       intervalMs: this.config.intervalMs,
       sources: this.config.sources,

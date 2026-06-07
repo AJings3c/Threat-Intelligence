@@ -8,6 +8,7 @@ import { store } from './store.js';
 import { notifier } from './notify/index.js';
 import { errorMessage } from './util.js';
 import { initPersistence, getTrend, isPersistEnabled } from './persist.js';
+import { buildStixBundle } from './stix.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS ?? 15 * 60 * 1000);
@@ -67,6 +68,13 @@ api.get('/trend', (req, res) => {
 
 api.get('/notify/status', (_req, res) => {
   res.json(notifier.status());
+});
+
+// STIX 2.1 bundle export for sharing with MISP / OpenCTI / SIEMs.
+api.get('/export/stix', (_req, res) => {
+  const bundle = buildStixBundle(store.getIndicators(), store.getAllCves());
+  res.setHeader('Content-Disposition', 'attachment; filename="threat-intel-stix.json"');
+  res.json(bundle);
 });
 
 // Manually trigger a digest push to all configured channels (DingTalk / Telegram).
