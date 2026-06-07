@@ -59,9 +59,17 @@ class ThreatStore {
   };
   private refreshing = false;
   private lastRefresh = 0;
+  // Listeners notified after each successful refresh (used for SSE streaming).
+  private refreshListeners = new Set<() => void>();
 
   get lastRefreshAt(): number {
     return this.lastRefresh;
+  }
+
+  // Subscribe to refresh events. Returns an unsubscribe function.
+  onRefresh(listener: () => void): () => void {
+    this.refreshListeners.add(listener);
+    return () => this.refreshListeners.delete(listener);
   }
 
   get isReady(): boolean {
@@ -103,6 +111,13 @@ class ThreatStore {
       this.lastRefresh = Date.now();
     } finally {
       this.refreshing = false;
+    }
+    for (const listener of this.refreshListeners) {
+      try {
+        listener();
+      } catch {
+        // a misbehaving listener must not break the refresh cycle
+      }
     }
   }
 

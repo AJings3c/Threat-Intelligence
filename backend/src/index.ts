@@ -15,6 +15,35 @@ const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS ?? 15 * 60 * 
 
 const app = express();
 app.use(cors());
+
+// Server-Sent Events stream for live updates. Registered BEFORE compression so the
+// long-lived response is not buffered. Emits a `refresh` event after each feed refresh.
+app.get('/api/stream', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const send = (): void => {
+    const s = store.getStats();
+    const payload = {
+      totalIndicators: s.totalIndicators,
+      totalCves: s.totalCves,
+      lastRefresh: store.lastRefreshAt ? new Date(store.lastRefreshAt).toISOString() : null,
+    };
+    res.write(`event: refresh\ndata: ${JSON.stringify(payload)}\n\n`);
+  };
+
+  res.write('event: hello\ndata: {}\n\n');
+  const unsubscribe = store.onRefresh(send);
+  const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
+  req.on('close', () => {
+    clearInterval(ping);
+    unsubscribe();
+    res.end();
+  });
+});
+
 app.use(compression());
 app.use(express.json());
 
