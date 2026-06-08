@@ -1,0 +1,62 @@
+{
+  "keywords": [
+    "CVE",
+    "0day",
+    "zero-day",
+    "exploit",
+    "RCE",
+    "PoC",
+    "ransomware",
+    "APT",
+    "IoC",
+    "breach",
+    "KEV",
+    "phishing",
+    "malware"
+  ],
+  "max_items": 20,
+  "storage": {
+    "enabled": true,
+    "sqlite_path": "data/security_intel_hub.db"
+  },
+  "collectors": {
+    "x": {
+      "enabled": false,
+      "bearer_token": "${X_BEARER_TOKEN}",
+      "query": "(CVE OR 0day OR zero-day OR exploit OR RCE OR ransomware OR APT OR IoC OR breach) lang:en -is:retweet",
+      "max_results": 25,
+      "api_base": "https://api.x.com/2"
+    },
+    "facebook": {
+      "enabled": false,
+      "access_token": "${META_ACCESS_TOKEN}",
+      "page_ids": [
+        "example_page_id"
+      ],
+      "graph_version": "v23.0",
+      "limit": 25,
+      "api_base": "https://graph.facebook.com"
+    },
+    "rss": {
+      "enabled": true,
+      "limit_per_feed": 10,
+      "feeds": [
+        "https://www.cisa.gov/news.xml",
+        "https://www.cisa.gov/cybersecurity-advisories/all.xml"
+      ]
+    }
+  },
+  "notifiers": {
+    "telegram": {
+      "enabled": false,
+      "bot_token": "${TELEGRAM_BOT_TOKEN}",
+      "chat_id": "${TELEGRAM_CHAT_ID}",
+      "api_base": "https://api.telegram.org"
+    },
+    "dingtalk": {
+      "enabled": false,
+      "webhook": "${DINGTALK_WEBHOOK}",
+      "secret": "${DINGTALK_SECRET}"
+    }
+  }
+}
