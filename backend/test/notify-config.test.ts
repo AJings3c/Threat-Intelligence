@@ -57,8 +57,26 @@ describe('loadNotifyConfig', () => {
   });
 
   it('parses and filters the source allow-list', () => {
-    const cfg = loadNotifyConfig({ ...base, NOTIFY_SOURCES: 'feodo, bogus ,nvd,x,facebook' });
-    expect(cfg.sources).toEqual(['feodo', 'nvd', 'x', 'facebook']);
+    const cfg = loadNotifyConfig({
+      ...base,
+      NOTIFY_SOURCES:
+        'feodo, bogus ,nvd,x,facebook,openphish,threatfox,malwarebazaar,spamhaus_drop,dshield,phishtank,abuseipdb,otx,taxii_import',
+    });
+    expect(cfg.sources).toEqual([
+      'feodo',
+      'nvd',
+      'x',
+      'facebook',
+      'openphish',
+      'threatfox',
+      'malwarebazaar',
+      'spamhaus_drop',
+      'dshield',
+      'phishtank',
+      'abuseipdb',
+      'otx',
+      'taxii_import',
+    ]);
   });
 
   it('treats an all-invalid source list as null (all sources)', () => {

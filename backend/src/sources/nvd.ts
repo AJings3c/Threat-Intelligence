@@ -1,5 +1,7 @@
 import type { CveItem, FetchResult } from '../types.js';
 import { fetchWithTimeout, errorMessage, cvssToSeverity } from '../util.js';
+import { fetchEpssScores } from './epss.js';
+import { sourceProfile } from '../sourceProfiles.js';
 
 const NVD_URL = 'https://services.nvd.nist.gov/rest/json/cves/2.0';
 
@@ -69,6 +71,7 @@ export async function fetchNvd(limit = 60, days = 14): Promise<FetchResult<CveIt
     const items: CveItem[] = vulns.map(({ cve }) => {
       const cvss = pickCvss(cve);
       const score = cvss?.baseScore;
+      const profile = sourceProfile('nvd');
       const description =
         cve.descriptions?.find((d) => d.lang === 'en')?.value ??
         cve.descriptions?.[0]?.value ??
@@ -81,6 +84,8 @@ export async function fetchNvd(limit = 60, days = 14): Promise<FetchResult<CveIt
         severity: cvssToSeverity(score),
         cvssScore: score,
         cvssVector: cvss?.vectorString,
+        sourceReliability: profile.reliability,
+        tlp: profile.tlp,
         published: cve.published,
         lastModified: cve.lastModified,
         reference: `https://nvd.nist.gov/vuln/detail/${cve.id}`,
@@ -90,6 +95,19 @@ export async function fetchNvd(limit = 60, days = 14): Promise<FetchResult<CveIt
 
     // Newest first.
     items.sort((a, b) => (b.published ?? '').localeCompare(a.published ?? ''));
+
+    try {
+      const epss = await fetchEpssScores(items.map((item) => item.id));
+      for (const item of items) {
+        const score = epss.get(item.id.toUpperCase());
+        if (!score) continue;
+        item.epssScore = score.epssScore;
+        item.epssPercentile = score.epssPercentile;
+        item.epssDate = score.epssDate;
+      }
+    } catch {
+      // EPSS is enrichment only; NVD CVEs should still be served if it is down.
+    }
 
     return { items: items.slice(0, limit), fetchedAt, error: null };
   } catch (err) {

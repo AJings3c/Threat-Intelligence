@@ -12,6 +12,8 @@ import {
   getTrend,
   recordPushEvent,
   successfulPushIds,
+  recordSourceHealthHistory,
+  getSourceHealthHistory,
 } from '../src/persist.js';
 
 const dir = path.join(process.cwd(), `.tmp-persist-test-${process.pid}`);
@@ -78,5 +80,49 @@ describe('persist (node:sqlite)', () => {
       new Set(['kev:CVE-2026-0001']),
     );
     expect(successfulPushIds('dingtalk', ['kev:CVE-2026-0001'])).toEqual(new Set());
+  });
+
+  it('stores and queries source health history', () => {
+    const now = Date.now();
+    recordSourceHealthHistory([
+      {
+        ts: now - 1000,
+        source: 'nvd',
+        ok: false,
+        stale: false,
+        count: 12,
+        error: 'HTTP 503',
+      },
+      {
+        ts: now,
+        source: 'feodo',
+        ok: true,
+        stale: true,
+        count: 4,
+        error: null,
+      },
+    ]);
+
+    const points = getSourceHealthHistory(now - 5000);
+    expect(points).toEqual(
+      expect.arrayContaining([
+        {
+          ts: now - 1000,
+          source: 'nvd',
+          ok: false,
+          stale: false,
+          count: 12,
+          error: 'HTTP 503',
+        },
+        {
+          ts: now,
+          source: 'feodo',
+          ok: true,
+          stale: true,
+          count: 4,
+          error: null,
+        },
+      ]),
+    );
   });
 });

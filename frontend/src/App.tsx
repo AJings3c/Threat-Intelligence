@@ -1,6 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CveItem, SourceHealth, Stats, ThreatIndicator, TrendPoint } from './types';
-import { fetchCves, fetchHealth, fetchMap, fetchStats, fetchThreats, fetchTrend } from './api';
+import type {
+  CveItem,
+  HashIntelResponse,
+  SourceHealth,
+  SourceHealthHistoryPoint,
+  Stats,
+  ThreatIndicator,
+  TrendPoint,
+} from './types';
+import {
+  fetchCves,
+  fetchHashIntel,
+  fetchHealth,
+  fetchMap,
+  fetchSourceHistory,
+  fetchStats,
+  fetchThreats,
+  fetchTrend,
+} from './api';
 import { StatsCards } from './components/StatsCards';
 import { ThreatMap } from './components/ThreatMap';
 import { Filters, type FilterState } from './components/Filters';
@@ -8,6 +25,7 @@ import { ThreatTable } from './components/ThreatTable';
 import { CvePanel } from './components/CvePanel';
 import { SourceHealthBar } from './components/SourceHealthBar';
 import { TrendChart } from './components/TrendChart';
+import { HashIntelPanel } from './components/HashIntelPanel';
 
 const REFRESH_MS = 60_000;
 
@@ -15,7 +33,9 @@ export default function App() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [points, setPoints] = useState<ThreatIndicator[]>([]);
   const [cves, setCves] = useState<CveItem[]>([]);
+  const [hashIntel, setHashIntel] = useState<HashIntelResponse | null>(null);
   const [health, setHealth] = useState<SourceHealth[]>([]);
+  const [sourceHistory, setSourceHistory] = useState<SourceHealthHistoryPoint[]>([]);
   const [trend, setTrend] = useState<{ enabled: boolean; points: TrendPoint[] }>({
     enabled: false,
     points: [],
@@ -24,6 +44,7 @@ export default function App() {
   const [total, setTotal] = useState(0);
   const [threatsLoading, setThreatsLoading] = useState(true);
   const [cvesLoading, setCvesLoading] = useState(true);
+  const [hashesLoading, setHashesLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [filters, setFilters] = useState<FilterState>({
@@ -35,15 +56,17 @@ export default function App() {
 
   const loadOverview = useCallback(async () => {
     try {
-      const [s, m, h, t] = await Promise.all([
+      const [s, m, h, t, sh] = await Promise.all([
         fetchStats(),
         fetchMap(),
         fetchHealth(),
         fetchTrend(),
+        fetchSourceHistory(),
       ]);
       setStats(s);
       setPoints(m.points);
       setHealth(h.sources);
+      setSourceHistory(sh.points);
       setTrend({ enabled: t.enabled, points: t.points });
       setError(null);
     } catch (err) {
@@ -63,15 +86,28 @@ export default function App() {
     }
   }, []);
 
+  const loadHashIntel = useCallback(async () => {
+    setHashesLoading(true);
+    try {
+      const res = await fetchHashIntel(30);
+      setHashIntel(res);
+    } catch {
+      // non-fatal
+    } finally {
+      setHashesLoading(false);
+    }
+  }, []);
+
   // Initial load + periodic overview refresh.
   useEffect(() => {
     void loadOverview();
     void loadCves();
+    void loadHashIntel();
     const id = setInterval(() => {
       void loadOverview();
     }, REFRESH_MS);
     return () => clearInterval(id);
-  }, [loadOverview, loadCves]);
+  }, [loadOverview, loadCves, loadHashIntel]);
 
   // Live push updates via SSE; the interval above remains as a fallback.
   useEffect(() => {
@@ -150,7 +186,7 @@ export default function App() {
       )}
 
       <div className="mb-4">
-        <SourceHealthBar sources={health} />
+        <SourceHealthBar sources={health} history={sourceHistory} />
       </div>
 
       <div className="mb-5">
@@ -170,6 +206,10 @@ export default function App() {
         <TrendChart enabled={trend.enabled} points={trend.points} />
       </div>
 
+      <div className="mb-5">
+        <HashIntelPanel data={hashIntel} loading={hashesLoading} />
+      </div>
+
       <div className="mb-3">
         <Filters value={filters} onChange={setFilters} />
       </div>
@@ -177,8 +217,8 @@ export default function App() {
       <ThreatTable threats={threats} total={total} loading={threatsLoading} />
 
       <footer className="mt-8 border-t border-white/10 pt-4 text-center text-xs text-slate-500">
-        Data: CISA KEV · abuse.ch Feodo Tracker · abuse.ch URLhaus · NVD. For defensive /
-        research use.
+        Data: CISA KEV · abuse.ch feeds · phishing feeds · network blocklists · NVD/FIRST EPSS.
+        For defensive / research use.
       </footer>
     </div>
   );

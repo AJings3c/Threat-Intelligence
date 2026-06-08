@@ -29,6 +29,13 @@ function patternFor(t: ThreatIndicator): string | null {
       return `[domain-name:value = '${v}']`;
     case 'url':
       return `[url:value = '${v}']`;
+    case 'cidr':
+      return `[ipv4-addr:value = '${v}']`;
+    case 'hash':
+      if (/^[a-f0-9]{64}$/i.test(t.indicator)) return `[file:hashes.'SHA-256' = '${v}']`;
+      if (/^[a-f0-9]{40}$/i.test(t.indicator)) return `[file:hashes.'SHA-1' = '${v}']`;
+      if (/^[a-f0-9]{32}$/i.test(t.indicator)) return `[file:hashes.MD5 = '${v}']`;
+      return null;
     default:
       return null; // 'cve' is exported as a vulnerability SDO instead
   }
@@ -79,6 +86,8 @@ export function buildStixBundle(
       valid_from: t.firstSeen ?? created,
       labels: t.tags.length > 0 ? t.tags : undefined,
       confidence: t.confidence,
+      x_threat_intel_source_reliability: t.sourceReliability,
+      x_threat_intel_tlp: t.tlp,
       external_references: t.reference ? [{ source_name: t.source, url: t.reference }] : undefined,
     });
   }

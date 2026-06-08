@@ -26,6 +26,11 @@ export function CvePanel({ cves, loading }: { cves: CveItem[]; loading: boolean 
                 <SeverityBadge severity={c.severity} />
               </div>
             </div>
+            {c.epssScore !== undefined && (
+              <div className="mt-1 text-[11px] font-medium text-slate-500">
+                EPSS {(c.epssScore * 100).toFixed(2)}% · P{Math.round((c.epssPercentile ?? 0) * 100)}
+              </div>
+            )}
             <p className="mt-1 line-clamp-2 text-xs text-slate-400">{c.description}</p>
           </a>
         ))}

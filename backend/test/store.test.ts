@@ -19,6 +19,33 @@ vi.mock('../src/sources/x.js', () => ({
 vi.mock('../src/sources/facebook.js', () => ({
   fetchFacebookPages: vi.fn(),
 }));
+vi.mock('../src/sources/openphish.js', () => ({
+  fetchOpenPhish: vi.fn(),
+}));
+vi.mock('../src/sources/threatfox.js', () => ({
+  fetchThreatFox: vi.fn(),
+}));
+vi.mock('../src/sources/malwarebazaar.js', () => ({
+  fetchMalwareBazaar: vi.fn(),
+}));
+vi.mock('../src/sources/spamhausDrop.js', () => ({
+  fetchSpamhausDrop: vi.fn(),
+}));
+vi.mock('../src/sources/dshield.js', () => ({
+  fetchDShield: vi.fn(),
+}));
+vi.mock('../src/sources/phishtank.js', () => ({
+  fetchPhishTank: vi.fn(),
+}));
+vi.mock('../src/sources/abuseipdb.js', () => ({
+  fetchAbuseIpDb: vi.fn(),
+}));
+vi.mock('../src/sources/otx.js', () => ({
+  fetchOtx: vi.fn(),
+}));
+vi.mock('../src/sources/taxiiImport.js', () => ({
+  fetchTaxiiImport: vi.fn(),
+}));
 vi.mock('../src/geo.js', () => ({
   geolocate: vi.fn(async () => new Map()),
   isIpv4: vi.fn((v: string) => /^(\d{1,3}\.){3}\d{1,3}$/.test(v)),
@@ -31,6 +58,15 @@ import { fetchUrlhaus } from '../src/sources/urlhaus.js';
 import { fetchNvd } from '../src/sources/nvd.js';
 import { fetchXRecentSearch } from '../src/sources/x.js';
 import { fetchFacebookPages } from '../src/sources/facebook.js';
+import { fetchOpenPhish } from '../src/sources/openphish.js';
+import { fetchThreatFox } from '../src/sources/threatfox.js';
+import { fetchMalwareBazaar } from '../src/sources/malwarebazaar.js';
+import { fetchSpamhausDrop } from '../src/sources/spamhausDrop.js';
+import { fetchDShield } from '../src/sources/dshield.js';
+import { fetchPhishTank } from '../src/sources/phishtank.js';
+import { fetchAbuseIpDb } from '../src/sources/abuseipdb.js';
+import { fetchOtx } from '../src/sources/otx.js';
+import { fetchTaxiiImport } from '../src/sources/taxiiImport.js';
 import type { ThreatIndicator, CveItem, FetchResult } from '../src/types.js';
 
 const mockKev = fetchCisaKev as ReturnType<typeof vi.fn>;
@@ -39,9 +75,18 @@ const mockUrlhaus = fetchUrlhaus as ReturnType<typeof vi.fn>;
 const mockNvd = fetchNvd as ReturnType<typeof vi.fn>;
 const mockX = fetchXRecentSearch as ReturnType<typeof vi.fn>;
 const mockFacebook = fetchFacebookPages as ReturnType<typeof vi.fn>;
+const mockOpenPhish = fetchOpenPhish as ReturnType<typeof vi.fn>;
+const mockThreatFox = fetchThreatFox as ReturnType<typeof vi.fn>;
+const mockMalwareBazaar = fetchMalwareBazaar as ReturnType<typeof vi.fn>;
+const mockSpamhausDrop = fetchSpamhausDrop as ReturnType<typeof vi.fn>;
+const mockDShield = fetchDShield as ReturnType<typeof vi.fn>;
+const mockPhishTank = fetchPhishTank as ReturnType<typeof vi.fn>;
+const mockAbuseIpDb = fetchAbuseIpDb as ReturnType<typeof vi.fn>;
+const mockOtx = fetchOtx as ReturnType<typeof vi.fn>;
+const mockTaxiiImport = fetchTaxiiImport as ReturnType<typeof vi.fn>;
 
 // Distinct indicator value per id so cross-source dedup keeps them separate.
-function indicator(id: string, source: 'cisa_kev' | 'feodo' | 'urlhaus'): ThreatIndicator {
+function indicator(id: string, source: ThreatIndicator['source']): ThreatIndicator {
   return {
     id,
     source,
@@ -70,14 +115,29 @@ function ok<T>(items: T[]): FetchResult<T> {
   return { items, fetchedAt: Date.now(), error: null };
 }
 
+function okAt<T>(items: T[], fetchedAt: number): FetchResult<T> {
+  return { items, fetchedAt, error: null };
+}
+
 function fail<T>(): FetchResult<T> {
   return { items: [], fetchedAt: Date.now(), error: 'HTTP 503' };
 }
 
 beforeEach(() => {
+  store.resetForTest();
   vi.clearAllMocks();
+  delete process.env.REFRESH_FEODO_INTERVAL_MS;
   mockX.mockResolvedValue(ok([]));
   mockFacebook.mockResolvedValue(ok([]));
+  mockOpenPhish.mockResolvedValue(ok([]));
+  mockThreatFox.mockResolvedValue(ok([]));
+  mockMalwareBazaar.mockResolvedValue(ok([]));
+  mockSpamhausDrop.mockResolvedValue(ok([]));
+  mockDShield.mockResolvedValue(ok([]));
+  mockPhishTank.mockResolvedValue(ok([]));
+  mockAbuseIpDb.mockResolvedValue(ok([]));
+  mockOtx.mockResolvedValue(ok([]));
+  mockTaxiiImport.mockResolvedValue(ok([]));
 });
 
 describe('ThreatStore resilience', () => {
@@ -117,6 +177,86 @@ describe('ThreatStore resilience', () => {
     expect(feodoHealth.ok).toBe(false);
     expect(feodoHealth.lastError).toBe('HTTP 503');
     expect(feodoHealth.count).toBe(1); // retained
+  });
+
+  it('skips a last-good source until its source-specific interval elapses', async () => {
+    process.env.REFRESH_FEODO_INTERVAL_MS = String(60 * 60 * 1000);
+    mockKev.mockResolvedValue(ok([]));
+    mockFeodo.mockResolvedValue(ok([indicator('f-interval', 'feodo')]));
+    mockUrlhaus.mockResolvedValue(ok([]));
+    mockNvd.mockResolvedValue(ok([]));
+
+    await store.refresh();
+    expect(mockFeodo).toHaveBeenCalledTimes(1);
+    expect(store.queryThreats({}).threats.some((t) => t.id === 'f-interval')).toBe(true);
+
+    mockFeodo.mockResolvedValue(ok([indicator('f-new', 'feodo')]));
+    await store.refresh();
+
+    expect(mockFeodo).toHaveBeenCalledTimes(1);
+    const threats = store.queryThreats({}).threats;
+    expect(threats.some((t) => t.id === 'f-interval')).toBe(true);
+    expect(threats.some((t) => t.id === 'f-new')).toBe(false);
+  });
+
+  it('marks a source stale when last-good data exceeds twice its refresh interval', async () => {
+    process.env.REFRESH_FEODO_INTERVAL_MS = '1';
+    mockKev.mockResolvedValue(ok([]));
+    mockFeodo.mockResolvedValue(okAt([indicator('f-stale', 'feodo')], Date.now() - 10_000));
+    mockUrlhaus.mockResolvedValue(ok([]));
+    mockNvd.mockResolvedValue(ok([]));
+
+    await store.refresh();
+
+    const feodoHealth = store.getHealth().find((h) => h.source === 'feodo')!;
+    expect(feodoHealth.ok).toBe(true);
+    expect(feodoHealth.stale).toBe(true);
+    expect(feodoHealth.refreshIntervalMs).toBe(1);
+  });
+});
+
+describe('ThreatStore hash intelligence', () => {
+  it('returns hash indicators and malware-family aggregations', async () => {
+    mockKev.mockResolvedValue(ok([]));
+    mockFeodo.mockResolvedValue(ok([]));
+    mockUrlhaus.mockResolvedValue(ok([]));
+    mockNvd.mockResolvedValue(ok([]));
+    mockMalwareBazaar.mockResolvedValue(
+      ok([
+        {
+          ...indicator('hash-1', 'malwarebazaar'),
+          type: 'malicious_hash',
+          indicator: 'a'.repeat(64),
+          indicatorType: 'hash',
+          malwareFamily: 'ExampleLoader',
+          severity: 'high',
+        },
+      ]),
+    );
+    mockThreatFox.mockResolvedValue(
+      ok([
+        {
+          ...indicator('hash-2', 'threatfox'),
+          type: 'malicious_hash',
+          indicator: 'b'.repeat(64),
+          indicatorType: 'hash',
+          malwareFamily: 'ExampleLoader',
+          severity: 'critical',
+        },
+      ]),
+    );
+
+    await store.refresh();
+    const intel = store.getHashIntel();
+
+    expect(intel.total).toBe(2);
+    expect(intel.hashes.map((hash) => hash.indicatorType)).toEqual(['hash', 'hash']);
+    expect(intel.families[0]).toMatchObject({
+      family: 'ExampleLoader',
+      count: 2,
+      critical: 1,
+      high: 1,
+    });
   });
 });
 

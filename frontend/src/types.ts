@@ -1,13 +1,34 @@
-export type ThreatSource = 'cisa_kev' | 'feodo' | 'urlhaus' | 'nvd' | 'x' | 'facebook';
+export type ThreatSource =
+  | 'cisa_kev'
+  | 'feodo'
+  | 'urlhaus'
+  | 'nvd'
+  | 'x'
+  | 'facebook'
+  | 'openphish'
+  | 'threatfox'
+  | 'malwarebazaar'
+  | 'spamhaus_drop'
+  | 'dshield'
+  | 'phishtank'
+  | 'abuseipdb'
+  | 'otx'
+  | 'taxii_import';
 export type ThreatType =
   | 'c2_server'
   | 'malware_host'
   | 'malicious_url'
+  | 'phishing_url'
+  | 'malicious_hash'
+  | 'malicious_network'
+  | 'scanner_network'
   | 'exploited_vuln'
   | 'vulnerability'
   | 'social_intel';
-export type IndicatorType = 'ip' | 'domain' | 'url' | 'cve';
+export type IndicatorType = 'ip' | 'domain' | 'url' | 'hash' | 'cidr' | 'cve';
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
+export type Tlp = 'clear' | 'green' | 'amber' | 'red';
+export type SourceReliability = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 
 export interface ThreatIndicator {
   id: string;
@@ -26,6 +47,10 @@ export interface ThreatIndicator {
   reference?: string;
   firstSeen?: string;
   lastSeen?: string;
+  sources?: ThreatSource[];
+  confidence?: number;
+  sourceReliability?: SourceReliability;
+  tlp?: Tlp;
 }
 
 export interface CveItem {
@@ -36,6 +61,11 @@ export interface CveItem {
   severity: Severity;
   cvssScore?: number;
   cvssVector?: string;
+  epssScore?: number;
+  epssPercentile?: number;
+  epssDate?: string;
+  sourceReliability?: SourceReliability;
+  tlp?: Tlp;
   published?: string;
   lastModified?: string;
   reference: string;
@@ -46,10 +76,23 @@ export interface SourceHealth {
   source: ThreatSource;
   label: string;
   ok: boolean;
+  stale: boolean;
+  deprecated: boolean;
+  deprecationMessage?: string;
   count: number;
   lastFetched: string | null;
   lastError: string | null;
   ageMs: number | null;
+  refreshIntervalMs: number;
+}
+
+export interface SourceHealthHistoryPoint {
+  ts: number;
+  source: ThreatSource;
+  ok: boolean;
+  stale: boolean;
+  count: number;
+  error: string | null;
 }
 
 export interface Stats {
@@ -78,6 +121,23 @@ export interface CveResponse {
   total: number;
 }
 
+export interface MalwareFamilySummary {
+  family: string;
+  count: number;
+  sources: ThreatSource[];
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  lastSeen: string | null;
+}
+
+export interface HashIntelResponse {
+  hashes: ThreatIndicator[];
+  total: number;
+  families: MalwareFamilySummary[];
+}
+
 export interface TrendPoint {
   ts: number;
   total: number;
@@ -90,4 +150,9 @@ export interface TrendPoint {
 export interface TrendResponse {
   enabled: boolean;
   points: TrendPoint[];
+}
+
+export interface SourceHistoryResponse {
+  enabled: boolean;
+  points: SourceHealthHistoryPoint[];
 }

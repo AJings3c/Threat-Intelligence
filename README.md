@@ -15,18 +15,28 @@ scheduled alert digests of new high-severity threats to **DingTalk** and **Teleg
 | **CISA KEV** | Known Exploited Vulnerabilities catalog | Exploited vulns |
 | **abuse.ch Feodo Tracker** | Botnet C2 server IPs | C2 servers |
 | **abuse.ch URLhaus** | Malware distribution URLs | Malicious URLs |
-| **NVD** | Latest published CVEs | Vulnerabilities |
+| **abuse.ch ThreatFox** | Recent IOCs (C2, domains, URLs, hashes) | Multi-IOC |
+| **abuse.ch MalwareBazaar** | Recent malware sample SHA256 hashes | File hashes |
+| **OpenPhish** | Community phishing URL feed | Phishing URLs |
+| **Spamhaus DROP** | Do-not-route malicious IPv4 netblocks | Malicious networks |
+| **SANS ISC DShield** | Top attacking IPv4 subnets over recent days | Scanner networks |
+| **NVD + FIRST EPSS** | Latest published CVEs with exploitation probability | Vulnerabilities |
 
-> ThreatFox / AlienVault OTX / AbuseIPDB require API keys and can be added later.
+> AlienVault OTX / AbuseIPDB / VirusTotal require API keys and can be added later.
 
-## Optional social sources (API key required)
+## Optional credentialed sources
 
 | Source | Content | Required config |
 |--------|---------|-----------------|
 | **X Recent Search** | Security posts matching a configurable query | `X_BEARER_TOKEN` |
 | **Facebook Graph API** | Posts from configured security pages | `FACEBOOK_ACCESS_TOKEN`, `FACEBOOK_PAGE_IDS` |
+| **PhishTank** | Verified online phishing URLs | `PHISHTANK_APP_KEY` |
+| **AbuseIPDB** | High-confidence abusive IPv4 blacklist | `ABUSEIPDB_API_KEY` |
+| **AlienVault OTX** | Indicators from subscribed OTX pulses | `OTX_API_KEY` |
+| **External TAXII** | STIX 2.1 objects from a TAXII collection objects URL | `TAXII_IMPORT_OBJECTS_URL` |
+| **VirusTotal / Shodan / Censys** | On-demand observable enrichment via `/api/enrich` | Provider API keys |
 
-Social sources are disabled by default. If credentials are missing, they return an empty
+Credentialed sources are disabled by default. If credentials are missing, they return an empty
 result and do not affect the public-feed refresh cycle.
 
 ## Architecture
@@ -35,7 +45,7 @@ result and do not affect the public-feed refresh cycle.
 threat-intel-platform/
 ├── backend/      Node + Express + TypeScript API (fetch → normalize → geo → cache)
 │   └── src/
-│       ├── sources/   one module per feed (cisaKev, feodo, urlhaus, nvd, x, facebook)
+│       ├── sources/   one module per feed (cisaKev, feodo, urlhaus, threatfox, etc.)
 │       ├── store.ts   in-memory aggregator + periodic refresh + stats
 │       ├── geo.ts     best-effort IP geolocation (ip-api batch)
 │       └── index.ts   Express server + REST API
@@ -43,7 +53,8 @@ threat-intel-platform/
     └── src/components/  map, feed table, CVE panel, stats, source health
 ```
 
-The backend fetches all configured feeds on startup and every `REFRESH_INTERVAL_MS` (default 15 min),
+The backend checks feeds on startup and every `REFRESH_INTERVAL_MS` (default 15 min),
+but each source also has its own minimum refresh interval so slow-moving feeds are not over-fetched.
 normalizes them into a unified `ThreatIndicator` model, and serves cached results so the
 UI stays fast and the upstream feeds are not hammered.
 
@@ -55,10 +66,15 @@ UI stays fast and the upstream feeds are not hammered.
 | `GET /api/threats` | Indicators, filterable by `source`, `type`, `severity`, `q`, `limit` |
 | `GET /api/map` | Geolocated indicators for the map |
 | `GET /api/cve` | Latest CVEs from NVD |
+| `GET /api/hashes` | Hash IOCs and malware-family aggregations |
+| `GET /api/enrich` | On-demand enrichment, query `indicator` + `type` |
 | `GET /api/stats` | Aggregate counts (by source/type/severity, top countries) |
 | `GET /api/sources/health` | Per-source freshness and error state |
+| `GET /api/sources/history` | Historical source health samples (requires `DATA_DIR`) |
 | `GET /api/notify/status` | Alert notifier config + last-run state |
 | `POST /api/notify/test` | Send a test digest to configured channels now |
+| `GET /taxii2/` | TAXII 2.1 discovery document |
+| `GET /taxii2/root/collections/:id/objects/` | Read-only TAXII envelope of STIX 2.1 objects |
 
 ## Quick start
 
@@ -80,6 +96,13 @@ npm start            # serves API and the built frontend from :4000
 
 When `frontend/dist` exists, the backend serves it directly, so a single process hosts
 both the API and the dashboard.
+
+### STIX / TAXII export
+
+The platform exposes a STIX bundle at `/api/export/stix` and a read-only TAXII 2.1 API root
+under `/taxii2/root/`. The TAXII collection id is stable and advertised by
+`GET /taxii2/root/collections/`. When `API_TOKEN` is configured, TAXII endpoints accept the
+same bearer/header/query token options as the REST API.
 
 ## Scripts
 
@@ -132,8 +155,22 @@ See `.env.example` for the full list of variables.
 |---------|---------|-------------|
 | `PORT` | `4000` | Backend port |
 | `REFRESH_INTERVAL_MS` | `900000` | Feed refresh interval (15 min) |
+| `REFRESH_<SOURCE>_INTERVAL_MS` | source default | Optional per-source minimum refresh interval, e.g. `REFRESH_NVD_INTERVAL_MS` |
 | `VITE_API_BASE` | `''` | Frontend API base (leave empty to use same-origin / dev proxy) |
 | `DATA_DIR` | — | Enables SQLite persistence for geo cache, first/last-seen, trends, push events |
+| `NVD_API_KEY` | — | Optional NVD API key, increases NVD rate limits |
+| `PHISHTANK_APP_KEY` | — | Optional PhishTank app key; enables PhishTank feed collection |
+| `ABUSEIPDB_API_KEY` | — | Optional AbuseIPDB API key; enables high-confidence IP blacklist collection |
+| `ABUSEIPDB_CONFIDENCE_MINIMUM` | `90` | Minimum AbuseIPDB confidence score for blacklist entries |
+| `ABUSEIPDB_LIMIT` | source limit | Max AbuseIPDB blacklist entries per refresh |
+| `OTX_API_KEY` | — | Optional AlienVault OTX API key; enables subscribed pulse import |
+| `OTX_LIMIT` | source limit | Max OTX indicators per refresh |
+| `TAXII_IMPORT_OBJECTS_URL` | — | Optional external TAXII collection objects URL to import |
+| `TAXII_IMPORT_BEARER_TOKEN` | — | Optional bearer token for external TAXII import |
+| `TAXII_IMPORT_USERNAME` / `TAXII_IMPORT_PASSWORD` | — | Optional basic auth for external TAXII import |
+| `VIRUSTOTAL_API_KEY` | — | Optional VirusTotal API key for `/api/enrich` |
+| `SHODAN_API_KEY` | — | Optional Shodan API key for IP enrichment |
+| `CENSYS_API_ID` / `CENSYS_API_SECRET` | — | Optional Censys Search credentials for IP enrichment |
 | `X_BEARER_TOKEN` | — | X Recent Search bearer token; enables X collection when set |
 | `X_QUERY` | security query | X Recent Search query |
 | `X_MAX_RESULTS` | `25` | X results per refresh, clamped to 10..100 |
@@ -143,7 +180,7 @@ See `.env.example` for the full list of variables.
 | `NOTIFY_ENABLED` | `false` | Master switch for scheduled alert push |
 | `NOTIFY_INTERVAL_MS` | `3600000` | Digest push interval (1 h) |
 | `NOTIFY_MIN_SEVERITY` | `critical` | Minimum severity to alert (`low`/`medium`/`high`/`critical`) |
-| `NOTIFY_SOURCES` | _(all)_ | Comma list to restrict sources (`cisa_kev,feodo,urlhaus,nvd,x,facebook`) |
+| `NOTIFY_SOURCES` | _(all)_ | Comma list to restrict sources (`cisa_kev,feodo,urlhaus,nvd,x,facebook,openphish,threatfox,malwarebazaar,spamhaus_drop,dshield,phishtank,abuseipdb,otx,taxii_import`) |
 | `NOTIFY_MAX_ITEMS` | `10` | Max items per digest message |
 | `DINGTALK_WEBHOOK` | — | DingTalk robot webhook URL or `access_token` |
 | `DINGTALK_SECRET` | — | DingTalk signing secret (optional) |
@@ -153,4 +190,5 @@ See `.env.example` for the full list of variables.
 ## License
 
 MIT. For defensive and research use. All upstream data remains subject to each provider's
-terms (CISA, abuse.ch, NVD).
+terms (CISA, abuse.ch, OpenPhish, Spamhaus, SANS ISC, NVD, FIRST, PhishTank, AbuseIPDB,
+AlienVault OTX, and any configured TAXII provider).

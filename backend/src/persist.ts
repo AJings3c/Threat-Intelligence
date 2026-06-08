@@ -34,6 +34,15 @@ export interface PushEventInput {
   error?: string;
 }
 
+export interface SourceHealthHistoryPoint {
+  ts: number;
+  source: string;
+  ok: boolean;
+  stale: boolean;
+  count: number;
+  error: string | null;
+}
+
 interface Statement {
   all(...params: unknown[]): unknown[];
   get(...params: unknown[]): unknown;
@@ -82,6 +91,17 @@ export function initPersistence(): void {
       );
       CREATE INDEX IF NOT EXISTS idx_push_events_lookup
         ON push_events(item_id, channel, status);
+      CREATE TABLE IF NOT EXISTS source_health_history (
+        ts INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        ok INTEGER NOT NULL,
+        stale INTEGER NOT NULL,
+        count INTEGER NOT NULL,
+        error TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (ts, source)
+      );
+      CREATE INDEX IF NOT EXISTS idx_source_health_history_source_ts
+        ON source_health_history(source, ts);
     `);
     console.log(`[persist] SQLite persistence enabled at ${dir}`);
   } catch (err) {
@@ -188,4 +208,45 @@ export function recordPushEvent(event: PushEventInput): void {
     new Date().toISOString(),
     event.error ?? '',
   );
+}
+
+export function recordSourceHealthHistory(points: SourceHealthHistoryPoint[]): void {
+  if (!db || points.length === 0) return;
+  const stmt = db.prepare(
+    'INSERT OR REPLACE INTO source_health_history (ts, source, ok, stale, count, error) VALUES (?, ?, ?, ?, ?, ?)',
+  );
+  for (const point of points) {
+    stmt.run(
+      point.ts,
+      point.source,
+      point.ok ? 1 : 0,
+      point.stale ? 1 : 0,
+      point.count,
+      point.error ?? '',
+    );
+  }
+}
+
+export function getSourceHealthHistory(sinceMs: number): SourceHealthHistoryPoint[] {
+  if (!db) return [];
+  const rows = db
+    .prepare(
+      'SELECT ts, source, ok, stale, count, error FROM source_health_history WHERE ts >= ? ORDER BY ts ASC, source ASC',
+    )
+    .all(sinceMs) as Array<{
+      ts: number;
+      source: string;
+      ok: number;
+      stale: number;
+      count: number;
+      error: string;
+    }>;
+  return rows.map((row) => ({
+    ts: row.ts,
+    source: row.source,
+    ok: row.ok === 1,
+    stale: row.stale === 1,
+    count: row.count,
+    error: row.error || null,
+  }));
 }

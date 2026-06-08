@@ -6,6 +6,7 @@ import type {
   Severity,
   ThreatType,
   FetchResult,
+  MalwareFamilySummary,
 } from './types.js';
 import { fetchCisaKev } from './sources/cisaKev.js';
 import { fetchFeodo } from './sources/feodo.js';
@@ -13,9 +14,19 @@ import { fetchUrlhaus } from './sources/urlhaus.js';
 import { fetchNvd } from './sources/nvd.js';
 import { fetchXRecentSearch } from './sources/x.js';
 import { fetchFacebookPages } from './sources/facebook.js';
+import { fetchOpenPhish } from './sources/openphish.js';
+import { fetchThreatFox } from './sources/threatfox.js';
+import { fetchMalwareBazaar } from './sources/malwarebazaar.js';
+import { fetchSpamhausDrop } from './sources/spamhausDrop.js';
+import { fetchDShield } from './sources/dshield.js';
+import { fetchPhishTank } from './sources/phishtank.js';
+import { fetchAbuseIpDb } from './sources/abuseipdb.js';
+import { fetchOtx } from './sources/otx.js';
+import { fetchTaxiiImport } from './sources/taxiiImport.js';
 import { geolocate, isIpv4 } from './geo.js';
 import { dedupeIndicators } from './correlate.js';
-import { recordSeen, recordSnapshot } from './persist.js';
+import { recordSeen, recordSnapshot, recordSourceHealthHistory } from './persist.js';
+import { sourceProfile } from './sourceProfiles.js';
 
 // Hard server-side cap so a client can't request an unbounded result set.
 export const MAX_QUERY_LIMIT = 2000;
@@ -33,7 +44,112 @@ export const SOURCE_LABELS: Record<ThreatSource, string> = {
   nvd: 'NVD CVE',
   x: 'X Security Intel',
   facebook: 'Facebook Security Intel',
+  openphish: 'OpenPhish',
+  threatfox: 'abuse.ch ThreatFox',
+  malwarebazaar: 'abuse.ch MalwareBazaar',
+  spamhaus_drop: 'Spamhaus DROP',
+  dshield: 'SANS ISC DShield',
+  phishtank: 'PhishTank',
+  abuseipdb: 'AbuseIPDB',
+  otx: 'AlienVault OTX',
+  taxii_import: 'External TAXII',
 };
+
+// IOC feeds (everything except NVD, which produces standalone CVEs).
+type IocSource = Exclude<ThreatSource, 'nvd'>;
+
+const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
+
+export const DEFAULT_SOURCE_REFRESH_INTERVAL_MS: Record<ThreatSource, number> = {
+  cisa_kev: 2 * HOUR,
+  feodo: 15 * MINUTE,
+  urlhaus: 15 * MINUTE,
+  nvd: HOUR,
+  x: 15 * MINUTE,
+  facebook: 15 * MINUTE,
+  openphish: 5 * MINUTE,
+  threatfox: 15 * MINUTE,
+  malwarebazaar: 15 * MINUTE,
+  spamhaus_drop: 6 * HOUR,
+  dshield: HOUR,
+  phishtank: HOUR,
+  abuseipdb: 2 * HOUR,
+  otx: HOUR,
+  taxii_import: HOUR,
+};
+
+function emptyIocItems(): Record<IocSource, ThreatIndicator[]> {
+  return {
+    cisa_kev: [],
+    feodo: [],
+    urlhaus: [],
+    x: [],
+    facebook: [],
+    openphish: [],
+    threatfox: [],
+    malwarebazaar: [],
+    spamhaus_drop: [],
+    dshield: [],
+    phishtank: [],
+    abuseipdb: [],
+    otx: [],
+    taxii_import: [],
+  };
+}
+
+function emptySourceState(): Record<ThreatSource, SourceState> {
+  return {
+    cisa_kev: { fetchedAt: null, error: null, count: 0 },
+    feodo: { fetchedAt: null, error: null, count: 0 },
+    urlhaus: { fetchedAt: null, error: null, count: 0 },
+    nvd: { fetchedAt: null, error: null, count: 0 },
+    x: { fetchedAt: null, error: null, count: 0 },
+    facebook: { fetchedAt: null, error: null, count: 0 },
+    openphish: { fetchedAt: null, error: null, count: 0 },
+    threatfox: { fetchedAt: null, error: null, count: 0 },
+    malwarebazaar: { fetchedAt: null, error: null, count: 0 },
+    spamhaus_drop: { fetchedAt: null, error: null, count: 0 },
+    dshield: { fetchedAt: null, error: null, count: 0 },
+    phishtank: { fetchedAt: null, error: null, count: 0 },
+    abuseipdb: { fetchedAt: null, error: null, count: 0 },
+    otx: { fetchedAt: null, error: null, count: 0 },
+    taxii_import: { fetchedAt: null, error: null, count: 0 },
+  };
+}
+
+export function sourceRefreshIntervalMs(source: ThreatSource): number {
+  const envName = `REFRESH_${source.toUpperCase()}_INTERVAL_MS`;
+  const raw = process.env[envName];
+  if (raw !== undefined && raw.trim() !== '') {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed >= 0) return Math.floor(parsed);
+  }
+  if (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true') return 0;
+  return DEFAULT_SOURCE_REFRESH_INTERVAL_MS[source];
+}
+
+interface IocDescriptor {
+  source: IocSource;
+  fetch: () => Promise<FetchResult<ThreatIndicator>>;
+}
+
+const IOC_DESCRIPTORS: IocDescriptor[] = [
+  { source: 'cisa_kev', fetch: fetchCisaKev },
+  { source: 'feodo', fetch: fetchFeodo },
+  { source: 'urlhaus', fetch: fetchUrlhaus },
+  { source: 'x', fetch: fetchXRecentSearch },
+  { source: 'facebook', fetch: fetchFacebookPages },
+  { source: 'openphish', fetch: fetchOpenPhish },
+  { source: 'threatfox', fetch: fetchThreatFox },
+  { source: 'malwarebazaar', fetch: fetchMalwareBazaar },
+  { source: 'spamhaus_drop', fetch: fetchSpamhausDrop },
+  { source: 'dshield', fetch: fetchDShield },
+  { source: 'phishtank', fetch: fetchPhishTank },
+  { source: 'abuseipdb', fetch: fetchAbuseIpDb },
+  { source: 'otx', fetch: fetchOtx },
+  { source: 'taxii_import', fetch: fetchTaxiiImport },
+];
 
 interface SourceState {
   // Timestamp of the last SUCCESSFUL fetch (drives staleness/age).
@@ -43,28 +159,12 @@ interface SourceState {
   count: number;
 }
 
-// IOC feeds (everything except NVD, which produces standalone CVEs).
-type IocSource = Exclude<ThreatSource, 'nvd'>;
-
 class ThreatStore {
   private indicators: ThreatIndicator[] = [];
   private cves: CveItem[] = [];
   // Last-good items retained per source so a transient feed failure doesn't wipe data.
-  private iocItems: Record<IocSource, ThreatIndicator[]> = {
-    cisa_kev: [],
-    feodo: [],
-    urlhaus: [],
-    x: [],
-    facebook: [],
-  };
-  private state: Record<ThreatSource, SourceState> = {
-    cisa_kev: { fetchedAt: null, error: null, count: 0 },
-    feodo: { fetchedAt: null, error: null, count: 0 },
-    urlhaus: { fetchedAt: null, error: null, count: 0 },
-    nvd: { fetchedAt: null, error: null, count: 0 },
-    x: { fetchedAt: null, error: null, count: 0 },
-    facebook: { fetchedAt: null, error: null, count: 0 },
-  };
+  private iocItems: Record<IocSource, ThreatIndicator[]> = emptyIocItems();
+  private state: Record<ThreatSource, SourceState> = emptySourceState();
   private refreshing = false;
   private lastRefresh = 0;
   // Listeners notified after each successful refresh (used for SSE streaming).
@@ -88,21 +188,20 @@ class ThreatStore {
     if (this.refreshing) return;
     this.refreshing = true;
     try {
-      const [kev, feodo, urlhaus, nvd, x, facebook] = await Promise.all([
-        fetchCisaKev(),
-        fetchFeodo(),
-        fetchUrlhaus(),
-        fetchNvd(),
-        fetchXRecentSearch(),
-        fetchFacebookPages(),
+      const [iocResults, nvd] = await Promise.all([
+        Promise.all(
+          IOC_DESCRIPTORS.map(async (descriptor) => ({
+            source: descriptor.source,
+            result: await this.fetchIfDue(descriptor.source, descriptor.fetch),
+          })),
+        ),
+        this.fetchIfDue('nvd', fetchNvd),
       ]);
 
-      this.applyIocResult('cisa_kev', kev);
-      this.applyIocResult('feodo', feodo);
-      this.applyIocResult('urlhaus', urlhaus);
-      this.applyCveResult(nvd);
-      this.applyIocResult('x', x);
-      this.applyIocResult('facebook', facebook);
+      for (const { source, result } of iocResults) {
+        if (result) this.applyIocResult(source, result);
+      }
+      if (nvd) this.applyCveResult(nvd);
 
       // Merge across sources so a repeated indicator becomes one record with a
       // corroboration-based confidence score instead of duplicate map points.
@@ -112,6 +211,15 @@ class ThreatStore {
         ...this.iocItems.urlhaus,
         ...this.iocItems.x,
         ...this.iocItems.facebook,
+        ...this.iocItems.openphish,
+        ...this.iocItems.threatfox,
+        ...this.iocItems.malwarebazaar,
+        ...this.iocItems.spamhaus_drop,
+        ...this.iocItems.dshield,
+        ...this.iocItems.phishtank,
+        ...this.iocItems.abuseipdb,
+        ...this.iocItems.otx,
+        ...this.iocItems.taxii_import,
       ]);
       await this.enrichGeo(indicators);
       this.indicators = indicators;
@@ -121,6 +229,7 @@ class ThreatStore {
 
       // Persist first/last-seen + a trend snapshot (no-op unless DATA_DIR is set).
       this.persistObservations();
+      this.persistSourceHealth();
 
       this.lastRefresh = Date.now();
     } finally {
@@ -133,6 +242,30 @@ class ThreatStore {
         // a misbehaving listener must not break the refresh cycle
       }
     }
+  }
+
+  resetForTest(): void {
+    this.indicators = [];
+    this.cves = [];
+    this.iocItems = emptyIocItems();
+    this.state = emptySourceState();
+    this.lastRefresh = 0;
+    this.refreshing = false;
+    this.refreshListeners.clear();
+  }
+
+  private shouldFetch(source: ThreatSource, now = Date.now()): boolean {
+    const lastGood = this.state[source].fetchedAt;
+    const minInterval = sourceRefreshIntervalMs(source);
+    return lastGood === null || minInterval <= 0 || now - lastGood >= minInterval;
+  }
+
+  private async fetchIfDue<T>(
+    source: ThreatSource,
+    fetcher: () => Promise<FetchResult<T>>,
+  ): Promise<FetchResult<T> | null> {
+    if (!this.shouldFetch(source)) return null;
+    return fetcher();
   }
 
   // Replace a source's retained items only when the fetch succeeded; otherwise keep
@@ -203,6 +336,20 @@ class ThreatStore {
       medium: sev.medium ?? 0,
       low: sev.low ?? 0,
     });
+  }
+
+  private persistSourceHealth(): void {
+    const ts = Date.now();
+    recordSourceHealthHistory(
+      this.getHealth().map((source) => ({
+        ts,
+        source: source.source,
+        ok: source.ok,
+        stale: source.stale,
+        count: source.count,
+        error: source.lastError,
+      })),
+    );
   }
 
   // Extract an IPv4 from an indicator for map plotting, then geolocate in bulk.
@@ -281,6 +428,50 @@ class ThreatStore {
     return this.cves;
   }
 
+  getHashIntel(limit = 50): {
+    hashes: ThreatIndicator[];
+    total: number;
+    families: MalwareFamilySummary[];
+  } {
+    const hashes = this.indicators
+      .filter((t) => t.indicatorType === 'hash')
+      .sort((a, b) => (b.lastSeen ?? b.firstSeen ?? '').localeCompare(a.lastSeen ?? a.firstSeen ?? ''));
+    return {
+      hashes: hashes.slice(0, clampLimit(limit, 50)),
+      total: hashes.length,
+      families: this.getMalwareFamilies(20),
+    };
+  }
+
+  private getMalwareFamilies(limit = 20): MalwareFamilySummary[] {
+    const byFamily = new Map<string, MalwareFamilySummary>();
+    for (const t of this.indicators) {
+      const family = t.malwareFamily?.trim();
+      if (!family) continue;
+      const existing =
+        byFamily.get(family) ??
+        ({
+          family,
+          count: 0,
+          sources: [],
+          critical: 0,
+          high: 0,
+          medium: 0,
+          low: 0,
+          lastSeen: null,
+        } satisfies MalwareFamilySummary);
+      existing.count += 1;
+      if (!existing.sources.includes(t.source)) existing.sources.push(t.source);
+      existing[t.severity] += 1;
+      const seen = t.lastSeen ?? t.firstSeen ?? null;
+      if (seen && (!existing.lastSeen || seen > existing.lastSeen)) existing.lastSeen = seen;
+      byFamily.set(family, existing);
+    }
+    return Array.from(byFamily.values())
+      .sort((a, b) => b.count - a.count || (b.lastSeen ?? '').localeCompare(a.lastSeen ?? ''))
+      .slice(0, clampLimit(limit, 20));
+  }
+
   getMapPoints(): ThreatIndicator[] {
     return this.indicators.filter((t) => t.lat !== undefined && t.lon !== undefined);
   }
@@ -318,14 +509,24 @@ class ThreatStore {
     const now = Date.now();
     return (Object.keys(this.state) as ThreatSource[]).map((source) => {
       const s = this.state[source];
+      const ageMs = s.fetchedAt ? now - s.fetchedAt : null;
+      const refreshIntervalMs = sourceRefreshIntervalMs(source);
+      const stale = ageMs !== null && refreshIntervalMs > 0 && ageMs > refreshIntervalMs * 2;
+      const deprecated = sourceProfile(source).deprecated;
       return {
         source,
         label: SOURCE_LABELS[source],
         ok: s.error === null && s.fetchedAt !== null,
+        stale,
+        deprecated: Boolean(deprecated),
+        deprecationMessage: deprecated
+          ? `${deprecated.message}${deprecated.replacement ? ` Replacement: ${deprecated.replacement}` : ''}`
+          : undefined,
         count: s.count,
         lastFetched: s.fetchedAt ? new Date(s.fetchedAt).toISOString() : null,
         lastError: s.error,
-        ageMs: s.fetchedAt ? now - s.fetchedAt : null,
+        ageMs,
+        refreshIntervalMs,
       };
     });
   }

@@ -7,8 +7,19 @@ import fs from 'node:fs';
 import { store } from './store.js';
 import { notifier } from './notify/index.js';
 import { errorMessage, extractToken } from './util.js';
-import { initPersistence, getTrend, isPersistEnabled } from './persist.js';
+import { initPersistence, getTrend, isPersistEnabled, getSourceHealthHistory } from './persist.js';
 import { buildStixBundle } from './stix.js';
+import {
+  buildTaxiiApiRoot,
+  buildTaxiiCollections,
+  buildTaxiiDiscovery,
+  buildTaxiiEnvelope,
+  buildTaxiiManifest,
+  TAXII_COLLECTION_ID,
+  TAXII_MEDIA_TYPE,
+  taxiiCollection,
+} from './taxii.js';
+import { enrichIndicator, parseIndicatorType } from './enrich.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS ?? 15 * 60 * 1000);
@@ -26,6 +37,29 @@ const tokenOf = (req: express.Request): string =>
 
 const app = express();
 app.use(cors());
+
+function taxiiBaseUrl(req: express.Request): string {
+  return `${req.protocol}://${req.get('host') ?? `localhost:${PORT}`}`;
+}
+
+function setTaxiiHeaders(res: express.Response): void {
+  res.setHeader('Content-Type', TAXII_MEDIA_TYPE);
+}
+
+function guardTaxii(req: express.Request, res: express.Response): boolean {
+  if (!API_TOKEN || tokenOf(req) === API_TOKEN) return true;
+  setTaxiiHeaders(res);
+  res.status(401).json({
+    title: 'Unauthorized',
+    description: 'invalid or missing API token',
+    error_code: 'unauthorized',
+  });
+  return false;
+}
+
+function stixObjects() {
+  return buildStixBundle(store.getIndicators(), store.getAllCves()).objects;
+}
 
 // Server-Sent Events stream for live updates. Registered BEFORE compression so the
 // long-lived response is not buffered. Emits a `refresh` event after each feed refresh.
@@ -61,6 +95,54 @@ app.get('/api/stream', (req, res) => {
 
 app.use(compression());
 app.use(express.json());
+
+app.get(['/taxii2', '/taxii2/'], (req, res) => {
+  if (!guardTaxii(req, res)) return;
+  setTaxiiHeaders(res);
+  res.json(buildTaxiiDiscovery(taxiiBaseUrl(req)));
+});
+
+app.get('/taxii2/root/', (req, res) => {
+  if (!guardTaxii(req, res)) return;
+  setTaxiiHeaders(res);
+  res.json(buildTaxiiApiRoot());
+});
+
+app.get('/taxii2/root/collections/', (req, res) => {
+  if (!guardTaxii(req, res)) return;
+  setTaxiiHeaders(res);
+  res.json(buildTaxiiCollections());
+});
+
+app.get('/taxii2/root/collections/:id/', (req, res) => {
+  if (!guardTaxii(req, res)) return;
+  setTaxiiHeaders(res);
+  if (req.params.id !== TAXII_COLLECTION_ID) {
+    res.status(404).json({ title: 'Not found', description: 'collection not found' });
+    return;
+  }
+  res.json(taxiiCollection());
+});
+
+app.get('/taxii2/root/collections/:id/objects/', (req, res) => {
+  if (!guardTaxii(req, res)) return;
+  setTaxiiHeaders(res);
+  if (req.params.id !== TAXII_COLLECTION_ID) {
+    res.status(404).json({ title: 'Not found', description: 'collection not found' });
+    return;
+  }
+  res.json(buildTaxiiEnvelope(stixObjects()));
+});
+
+app.get('/taxii2/root/collections/:id/manifest/', (req, res) => {
+  if (!guardTaxii(req, res)) return;
+  setTaxiiHeaders(res);
+  if (req.params.id !== TAXII_COLLECTION_ID) {
+    res.status(404).json({ title: 'Not found', description: 'collection not found' });
+    return;
+  }
+  res.json(buildTaxiiManifest(stixObjects()));
+});
 
 const api = express.Router();
 
@@ -109,12 +191,37 @@ api.get('/cve', (req, res) => {
   res.json({ ...store.getCves(Number.isFinite(limit) ? limit : 60) });
 });
 
+api.get('/hashes', (req, res) => {
+  const limit = req.query.limit ? Number(req.query.limit) : 50;
+  res.json({ ...store.getHashIntel(Number.isFinite(limit) ? limit : 50) });
+});
+
+api.get('/enrich', (req, res) => {
+  const indicator = typeof req.query.indicator === 'string' ? req.query.indicator.trim() : '';
+  const indicatorType = parseIndicatorType(typeof req.query.type === 'string' ? req.query.type : undefined);
+  if (!indicator || !indicatorType) {
+    res.status(400).json({ error: 'missing or invalid indicator/type query parameters' });
+    return;
+  }
+  enrichIndicator(indicator, indicatorType)
+    .then((result) => res.json(result))
+    .catch((err) => res.status(500).json({ error: errorMessage(err) }));
+});
+
 api.get('/stats', (_req, res) => {
   res.json(store.getStats());
 });
 
 api.get('/sources/health', (_req, res) => {
   res.json({ sources: store.getHealth() });
+});
+
+// Historical source-health samples (requires persistence; empty when disabled).
+api.get('/sources/history', (req, res) => {
+  const days = req.query.days ? Number(req.query.days) : 7;
+  const window = Number.isFinite(days) && days > 0 ? Math.min(days, 365) : 7;
+  const since = Date.now() - window * 24 * 60 * 60 * 1000;
+  res.json({ enabled: isPersistEnabled(), points: getSourceHealthHistory(since) });
 });
 
 // Historical indicator-count trend (requires persistence; empty when disabled).

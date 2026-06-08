@@ -32,7 +32,23 @@ function parseSeverity(value: string | undefined): Severity {
 
 function parseSources(value: string | undefined): ThreatSource[] | null {
   if (!value) return null;
-  const valid: ThreatSource[] = ['cisa_kev', 'feodo', 'urlhaus', 'nvd', 'x', 'facebook'];
+  const valid: ThreatSource[] = [
+    'cisa_kev',
+    'feodo',
+    'urlhaus',
+    'nvd',
+    'x',
+    'facebook',
+    'openphish',
+    'threatfox',
+    'malwarebazaar',
+    'spamhaus_drop',
+    'dshield',
+    'phishtank',
+    'abuseipdb',
+    'otx',
+    'taxii_import',
+  ];
   const parsed = value
     .split(',')
     .map((s) => s.trim().toLowerCase())

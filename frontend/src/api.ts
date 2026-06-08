@@ -3,8 +3,10 @@ import type {
   ThreatsResponse,
   MapResponse,
   CveResponse,
+  HashIntelResponse,
   SourceHealth,
   TrendResponse,
+  SourceHistoryResponse,
 } from './types';
 
 const BASE = import.meta.env.VITE_API_BASE ?? '';
@@ -47,8 +49,16 @@ export function fetchCves(limit = 40): Promise<CveResponse> {
   return getJson<CveResponse>(`/api/cve?limit=${limit}`);
 }
 
+export function fetchHashIntel(limit = 30): Promise<HashIntelResponse> {
+  return getJson<HashIntelResponse>(`/api/hashes?limit=${limit}`);
+}
+
 export function fetchHealth(): Promise<{ sources: SourceHealth[] }> {
   return getJson<{ sources: SourceHealth[] }>('/api/sources/health');
+}
+
+export function fetchSourceHistory(days = 7): Promise<SourceHistoryResponse> {
+  return getJson<SourceHistoryResponse>(`/api/sources/history?days=${days}`);
 }
 
 export function fetchTrend(days = 30): Promise<TrendResponse> {

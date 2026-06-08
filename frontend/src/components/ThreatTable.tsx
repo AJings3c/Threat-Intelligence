@@ -69,7 +69,16 @@ export function ThreatTable({
                   {t.title && <div className="truncate text-xs text-slate-400">{t.title}</div>}
                 </td>
                 <td className="px-4 py-2 text-slate-300">{TYPE_LABELS[t.type]}</td>
-                <td className="px-4 py-2 text-slate-300">{SOURCE_LABELS[t.source]}</td>
+                <td className="px-4 py-2 text-slate-300">
+                  <div>{SOURCE_LABELS[t.source]}</div>
+                  {(t.confidence !== undefined || t.sourceReliability || t.tlp) && (
+                    <div className="text-xs text-slate-500">
+                      {t.confidence !== undefined ? `C${t.confidence}` : 'C—'}
+                      {t.sourceReliability ? ` · R${t.sourceReliability}` : ''}
+                      {t.tlp ? ` · TLP:${t.tlp.toUpperCase()}` : ''}
+                    </div>
+                  )}
+                </td>
                 <td className="px-4 py-2 text-slate-300">{t.country ?? '—'}</td>
                 <td className="px-4 py-2 text-slate-400">{timeAgo(t.lastSeen ?? t.firstSeen)}</td>
               </tr>

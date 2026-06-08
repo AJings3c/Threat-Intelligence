@@ -17,18 +17,17 @@ specialize the domain.
 | Dimension | worldmonitor | This platform |
 |-----------|--------------|---------------|
 | **Domain** | Broad: news, geopolitics, finance, infrastructure, OSINT | Narrow: cyber threat intel (IOCs, CVEs, C2, malware URLs) |
-| **Data sources** | 500+ curated news/RSS feeds across 15 categories | 4 structured CTI feeds (CISA KEV, Feodo, URLhaus, NVD) |
+| **Data sources** | 500+ curated news/RSS feeds across 15 categories | Structured CTI feeds across CVE, URL, IP, hash, phishing, CIDR, social, and optional TAXII/API-key sources |
 | **Map** | Dual engine: 3D globe (globe.gl) + WebGL flat (deck.gl), 45 layers | Single SVG world map (react-simple-maps), geolocated IOC dots |
-| **Intelligence** | AI synthesis (Ollama/local LLM), cross-stream correlation, risk index | Rule-based normalization + severity mapping (no AI yet) |
+| **Intelligence** | AI synthesis (Ollama/local LLM), cross-stream correlation, risk index | Rule-based normalization, cross-feed dedupe, confidence/reliability/TLP metadata, EPSS |
 | **Alerting** | In-app signals | **Scheduled DingTalk + Telegram push digests** (new) |
-| **Persistence** | DB-backed (PLpgSQL present) | In-memory TTL cache (MVP) |
+| **Persistence** | DB-backed (PLpgSQL present) | In-memory cache with optional SQLite first/last-seen, trend, geo, push, and source-health history |
 | **Packaging** | Web + native desktop (Tauri 2), 5 site variants, 21 languages | Single web app (monorepo: Express API + React dashboard) |
 | **Scale/Maturity** | 54k★, 80 contributors, 43 releases | Fresh MVP |
 | **Stack** | TypeScript + JS, Rust (Tauri), Astro, Python | TypeScript end-to-end (Node/Express + Vite/React/Tailwind) |
 
 **Key capability gaps (worldmonitor has, we don't yet):** 3D globe & rich map layers, AI
-synthesis/correlation, persistence + historical trends, desktop app, i18n, alerting beyond
-push (we just added push), and a far larger source catalog.
+synthesis, desktop app, i18n, alerting beyond chat push, and a far larger source catalog.
 
 **Where we are intentionally different/better for the CTI use case:** structured IOC schema
 with severity, IP geolocation of indicators, per-source health monitoring, a clean REST API
@@ -89,16 +88,25 @@ Searched with: `threat intelligence`, `threat-intel`, `CTI`, `OSINT`, `IOC`, `th
   severity/source filters, signed DingTalk, test endpoint).
 
 **Next (high value, low effort)**
-- More feeds (no key): ThreatFox (auth now), abuse.ch SSLBL, Spamhaus DROP, blocklist.de,
-  Feodo IP-only, CISA advisories.
-- **STIX 2.1 export** endpoint (`/api/stix`) + optional TAXII — instant interoperability.
+- ✅ More feeds (no key): ThreatFox recent IOCs, MalwareBazaar recent SHA256 hashes,
+  OpenPhish phishing URLs, and FIRST EPSS CVE enrichment.
+- ✅ CIDR network feeds: Spamhaus DROP and SANS ISC/DShield block list.
+- ✅ Optional credentialed phishing feed: PhishTank verified online URLs.
+- ✅ Source-specific refresh intervals for slow-moving feeds.
+- ✅ Source-health history and stale-source warnings.
+- ✅ Hash drill-down view and malware-family aggregation.
+- ✅ Optional credentialed IP source: AbuseIPDB high-confidence blacklist.
+- ✅ Read-only TAXII 2.1 export over the existing STIX bundle.
+- ✅ Optional AlienVault OTX subscribed-pulse import and external TAXII collection import.
+- ✅ On-demand VirusTotal, Shodan, and Censys enrichment endpoint.
+- The old abuse.ch SSLBL Botnet C2 CSV is deprecated and should stay out of the
+  default source set.
 - Generic **webhook + Slack + email** channels (reuse the notifier abstraction).
-- Persistence (SQLite) for **first-seen/last-seen**, history, and "new since" trends.
+- SIEM export formats (CEF/LEEF, ECS) for operational integrations.
 
 **Later (differentiation)**
 - Enrichment fan-out (ASN/whois/reputation) à la IntelOwl.
-- Cross-feed **correlation + confidence scoring** and TLP labels.
-- Richer map (globe.gl/deck.gl), MITRE ATT&CK mapping, AI summarization of CVE clusters.
+- Richer map (globe.gl/deck.gl), MITRE ATT&CK mapping, relationships, and AI summarization of CVE clusters.
 
 ---
 

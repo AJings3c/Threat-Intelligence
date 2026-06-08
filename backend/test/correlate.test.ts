@@ -40,6 +40,8 @@ describe('dedupeIndicators', () => {
     expect(out[0].severity).toBe('high');
     expect(out[0].tags.sort()).toEqual(['c2', 'malware']);
     expect(out[0].confidence).toBe(scoreConfidence(['feodo', 'urlhaus'], 'high'));
+    expect(out[0].sourceReliability).toBe('A');
+    expect(out[0].tlp).toBe('clear');
   });
 
   it('keeps distinct indicators separate and normalizes case', () => {

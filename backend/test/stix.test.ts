@@ -29,9 +29,28 @@ describe('buildStixBundle', () => {
   it('emits a 2.1 bundle with indicator + vulnerability SDOs', () => {
     const bundle = buildStixBundle(
       [
-        ind({ indicator: '1.2.3.4', indicatorType: 'ip', tags: ['c2'] }),
+        ind({
+          indicator: '1.2.3.4',
+          indicatorType: 'ip',
+          tags: ['c2'],
+          confidence: 72,
+          sourceReliability: 'A',
+          tlp: 'clear',
+        }),
         ind({ indicator: 'evil.com', indicatorType: 'domain' }),
         ind({ indicator: 'http://bad/x', indicatorType: 'url' }),
+        ind({
+          indicator: 'a'.repeat(64),
+          indicatorType: 'hash',
+          type: 'malicious_hash',
+          source: 'malwarebazaar',
+        }),
+        ind({
+          indicator: '10.0.0.0/24',
+          indicatorType: 'cidr',
+          type: 'malicious_network',
+          source: 'spamhaus_drop',
+        }),
       ],
       [cve],
     );
@@ -43,6 +62,15 @@ describe('buildStixBundle', () => {
     expect(patterns).toContain("[ipv4-addr:value = '1.2.3.4']");
     expect(patterns).toContain("[domain-name:value = 'evil.com']");
     expect(patterns).toContain("[url:value = 'http://bad/x']");
+    expect(patterns).toContain(`[file:hashes.'SHA-256' = '${'a'.repeat(64)}']`);
+    expect(patterns).toContain("[ipv4-addr:value = '10.0.0.0/24']");
+
+    const ipIndicator = bundle.objects.find(
+      (o) => o.type === 'indicator' && o.pattern === "[ipv4-addr:value = '1.2.3.4']",
+    );
+    expect(ipIndicator?.confidence).toBe(72);
+    expect(ipIndicator?.x_threat_intel_source_reliability).toBe('A');
+    expect(ipIndicator?.x_threat_intel_tlp).toBe('clear');
 
     const vuln = bundle.objects.find((o) => o.type === 'vulnerability');
     expect(vuln?.external_references).toEqual([{ source_name: 'cve', external_id: 'CVE-2025-0001' }]);
