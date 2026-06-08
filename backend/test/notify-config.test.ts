@@ -57,8 +57,8 @@ describe('loadNotifyConfig', () => {
   });
 
   it('parses and filters the source allow-list', () => {
-    const cfg = loadNotifyConfig({ ...base, NOTIFY_SOURCES: 'feodo, bogus ,nvd' });
-    expect(cfg.sources).toEqual(['feodo', 'nvd']);
+    const cfg = loadNotifyConfig({ ...base, NOTIFY_SOURCES: 'feodo, bogus ,nvd,x,facebook' });
+    expect(cfg.sources).toEqual(['feodo', 'nvd', 'x', 'facebook']);
   });
 
   it('treats an all-invalid source list as null (all sources)', () => {

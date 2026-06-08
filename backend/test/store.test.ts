@@ -13,6 +13,12 @@ vi.mock('../src/sources/urlhaus.js', () => ({
 vi.mock('../src/sources/nvd.js', () => ({
   fetchNvd: vi.fn(),
 }));
+vi.mock('../src/sources/x.js', () => ({
+  fetchXRecentSearch: vi.fn(),
+}));
+vi.mock('../src/sources/facebook.js', () => ({
+  fetchFacebookPages: vi.fn(),
+}));
 vi.mock('../src/geo.js', () => ({
   geolocate: vi.fn(async () => new Map()),
   isIpv4: vi.fn((v: string) => /^(\d{1,3}\.){3}\d{1,3}$/.test(v)),
@@ -23,12 +29,16 @@ import { fetchCisaKev } from '../src/sources/cisaKev.js';
 import { fetchFeodo } from '../src/sources/feodo.js';
 import { fetchUrlhaus } from '../src/sources/urlhaus.js';
 import { fetchNvd } from '../src/sources/nvd.js';
+import { fetchXRecentSearch } from '../src/sources/x.js';
+import { fetchFacebookPages } from '../src/sources/facebook.js';
 import type { ThreatIndicator, CveItem, FetchResult } from '../src/types.js';
 
 const mockKev = fetchCisaKev as ReturnType<typeof vi.fn>;
 const mockFeodo = fetchFeodo as ReturnType<typeof vi.fn>;
 const mockUrlhaus = fetchUrlhaus as ReturnType<typeof vi.fn>;
 const mockNvd = fetchNvd as ReturnType<typeof vi.fn>;
+const mockX = fetchXRecentSearch as ReturnType<typeof vi.fn>;
+const mockFacebook = fetchFacebookPages as ReturnType<typeof vi.fn>;
 
 // Distinct indicator value per id so cross-source dedup keeps them separate.
 function indicator(id: string, source: 'cisa_kev' | 'feodo' | 'urlhaus'): ThreatIndicator {
@@ -66,6 +76,8 @@ function fail<T>(): FetchResult<T> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockX.mockResolvedValue(ok([]));
+  mockFacebook.mockResolvedValue(ok([]));
 });
 
 describe('ThreatStore resilience', () => {
@@ -86,6 +98,8 @@ describe('ThreatStore resilience', () => {
     mockFeodo.mockResolvedValue(fail<ThreatIndicator>());
     mockUrlhaus.mockResolvedValue(ok([indicator('u2', 'urlhaus')]));
     mockNvd.mockResolvedValue(fail<CveItem>());
+    mockX.mockResolvedValue(ok([]));
+    mockFacebook.mockResolvedValue(ok([]));
 
     await store.refresh();
     const after2 = store.queryThreats({});
@@ -121,6 +135,8 @@ describe('ThreatStore KEV↔NVD correlation', () => {
     mockFeodo.mockResolvedValue(ok([]));
     mockUrlhaus.mockResolvedValue(ok([]));
     mockNvd.mockResolvedValue(ok([cve('CVE-2025-1234', 6.5), cve('CVE-2025-9999', 5.0)]));
+    mockX.mockResolvedValue(ok([]));
+    mockFacebook.mockResolvedValue(ok([]));
 
     await store.refresh();
     const { cves } = store.getCves();

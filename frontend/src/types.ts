@@ -1,10 +1,11 @@
-export type ThreatSource = 'cisa_kev' | 'feodo' | 'urlhaus' | 'nvd';
+export type ThreatSource = 'cisa_kev' | 'feodo' | 'urlhaus' | 'nvd' | 'x' | 'facebook';
 export type ThreatType =
   | 'c2_server'
   | 'malware_host'
   | 'malicious_url'
   | 'exploited_vuln'
-  | 'vulnerability';
+  | 'vulnerability'
+  | 'social_intel';
 export type IndicatorType = 'ip' | 'domain' | 'url' | 'cve';
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
 

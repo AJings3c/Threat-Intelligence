@@ -11,6 +11,8 @@ import { fetchCisaKev } from './sources/cisaKev.js';
 import { fetchFeodo } from './sources/feodo.js';
 import { fetchUrlhaus } from './sources/urlhaus.js';
 import { fetchNvd } from './sources/nvd.js';
+import { fetchXRecentSearch } from './sources/x.js';
+import { fetchFacebookPages } from './sources/facebook.js';
 import { geolocate, isIpv4 } from './geo.js';
 import { dedupeIndicators } from './correlate.js';
 import { recordSeen, recordSnapshot } from './persist.js';
@@ -29,6 +31,8 @@ export const SOURCE_LABELS: Record<ThreatSource, string> = {
   feodo: 'abuse.ch Feodo Tracker',
   urlhaus: 'abuse.ch URLhaus',
   nvd: 'NVD CVE',
+  x: 'X Security Intel',
+  facebook: 'Facebook Security Intel',
 };
 
 interface SourceState {
@@ -50,12 +54,16 @@ class ThreatStore {
     cisa_kev: [],
     feodo: [],
     urlhaus: [],
+    x: [],
+    facebook: [],
   };
   private state: Record<ThreatSource, SourceState> = {
     cisa_kev: { fetchedAt: null, error: null, count: 0 },
     feodo: { fetchedAt: null, error: null, count: 0 },
     urlhaus: { fetchedAt: null, error: null, count: 0 },
     nvd: { fetchedAt: null, error: null, count: 0 },
+    x: { fetchedAt: null, error: null, count: 0 },
+    facebook: { fetchedAt: null, error: null, count: 0 },
   };
   private refreshing = false;
   private lastRefresh = 0;
@@ -80,17 +88,21 @@ class ThreatStore {
     if (this.refreshing) return;
     this.refreshing = true;
     try {
-      const [kev, feodo, urlhaus, nvd] = await Promise.all([
+      const [kev, feodo, urlhaus, nvd, x, facebook] = await Promise.all([
         fetchCisaKev(),
         fetchFeodo(),
         fetchUrlhaus(),
         fetchNvd(),
+        fetchXRecentSearch(),
+        fetchFacebookPages(),
       ]);
 
       this.applyIocResult('cisa_kev', kev);
       this.applyIocResult('feodo', feodo);
       this.applyIocResult('urlhaus', urlhaus);
       this.applyCveResult(nvd);
+      this.applyIocResult('x', x);
+      this.applyIocResult('facebook', facebook);
 
       // Merge across sources so a repeated indicator becomes one record with a
       // corroboration-based confidence score instead of duplicate map points.
@@ -98,6 +110,8 @@ class ThreatStore {
         ...this.iocItems.cisa_kev,
         ...this.iocItems.feodo,
         ...this.iocItems.urlhaus,
+        ...this.iocItems.x,
+        ...this.iocItems.facebook,
       ]);
       await this.enrichGeo(indicators);
       this.indicators = indicators;

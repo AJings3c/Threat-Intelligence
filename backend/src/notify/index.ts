@@ -7,6 +7,14 @@ import { sendDingtalk } from './dingtalk.js';
 import { sendTelegram } from './telegram.js';
 import { sendSlack, sendWebhook } from './webhook.js';
 import { errorMessage } from '../util.js';
+import { recordPushEvent, successfulPushIds } from '../persist.js';
+
+type DeliveryChannel = 'dingtalk' | 'telegram' | 'slack' | 'webhook';
+
+interface DeliveryResult {
+  ok: boolean;
+  error: string | null;
+}
 
 export interface NotifierStatus {
   enabled: boolean;
@@ -23,8 +31,15 @@ export interface NotifierStatus {
 
 class Notifier {
   private config: NotifyConfig = loadNotifyConfig();
-  // Track indicator IDs we have already alerted on, so digests only contain new threats.
+  // Startup baseline: IDs already present before alerting begins, suppressed to avoid
+  // historical spam. Later items remain eligible until each configured channel succeeds.
   private seen = new Set<string>();
+  private delivered: Record<DeliveryChannel, Set<string>> = {
+    dingtalk: new Set(),
+    telegram: new Set(),
+    slack: new Set(),
+    webhook: new Set(),
+  };
   private primed = false;
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastRunAt = 0;
@@ -37,8 +52,8 @@ class Notifier {
     return this.config.enabled;
   }
 
-  // Collect indicators that meet the severity/source filters and have not been alerted yet.
-  private collectNew(): AlertItem[] {
+  // Collect indicators that meet the severity/source filters.
+  private collectEligible(): AlertItem[] {
     const minRank = severityRank(this.config.minSeverity);
     const allow = this.config.sources;
     const items: AlertItem[] = [];
@@ -46,7 +61,6 @@ class Notifier {
     for (const t of store.getIndicators()) {
       if (severityRank(t.severity) < minRank) continue;
       if (allow && !allow.includes(t.source)) continue;
-      if (this.seen.has(t.id)) continue;
       items.push({
         id: t.id,
         sourceLabel: SOURCE_LABELS[t.source],
@@ -63,7 +77,6 @@ class Notifier {
     if (nvdAllowed) {
       for (const c of store.getAllCves()) {
         if (severityRank(c.severity) < minRank) continue;
-        if (this.seen.has(c.id)) continue;
         items.push({
           id: c.id,
           sourceLabel: SOURCE_LABELS.nvd,
@@ -78,6 +91,29 @@ class Notifier {
     // Highest severity first for a useful digest ordering.
     items.sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
     return items;
+  }
+
+  private configuredChannels(): DeliveryChannel[] {
+    const channels: DeliveryChannel[] = [];
+    if (this.config.dingtalk) channels.push('dingtalk');
+    if (this.config.telegram) channels.push('telegram');
+    if (this.config.slack) channels.push('slack');
+    if (this.config.webhook) channels.push('webhook');
+    return channels;
+  }
+
+  private unpushedForChannel(channel: DeliveryChannel, items: AlertItem[]): AlertItem[] {
+    const alreadyStored = successfulPushIds(
+      channel,
+      items.map((item) => item.id),
+    );
+    return items.filter(
+      (item) => !this.delivered[channel].has(item.id) && !alreadyStored.has(item.id),
+    );
+  }
+
+  private markDelivered(channel: DeliveryChannel, items: AlertItem[]): void {
+    for (const item of items) this.delivered[channel].add(item.id);
   }
 
   private markSeen(items: AlertItem[]): void {
@@ -100,49 +136,51 @@ class Notifier {
   async runOnce(force = false): Promise<AlertItem[]> {
     if (!this.config.enabled && !force) return [];
 
-    const candidates = this.collectNew();
+    const eligible = this.collectEligible();
 
     // First run after boot: prime the baseline without spamming historical data.
     if (!this.primed && !force) {
-      this.markSeen(candidates);
+      this.markSeen(eligible);
       this.primed = true;
       this.lastRunAt = Date.now();
       return [];
     }
 
+    const candidates = force ? eligible : eligible.filter((item) => !this.seen.has(item.id));
     if (candidates.length === 0) {
       this.lastRunAt = Date.now();
       return [];
     }
 
-    const toSend = candidates.slice(0, this.config.maxItems);
-    const digest = buildDigest(toSend);
+    const sentById = new Map<string, AlertItem>();
     const result: Record<string, string> = {};
 
-    if (this.config.dingtalk) {
-      const r = await sendDingtalk(this.config.dingtalk, digest);
-      result.dingtalk = r.ok ? 'ok' : `error: ${r.error}`;
-    }
-    if (this.config.telegram) {
-      const r = await sendTelegram(this.config.telegram, digest);
-      result.telegram = r.ok ? 'ok' : `error: ${r.error}`;
-    }
-    if (this.config.slack) {
-      const r = await sendSlack(this.config.slack.webhook, digest);
-      result.slack = r.ok ? 'ok' : `error: ${r.error}`;
-    }
-    if (this.config.webhook) {
-      const r = await sendWebhook(this.config.webhook.url, digest);
-      result.webhook = r.ok ? 'ok' : `error: ${r.error}`;
+    for (const channel of this.configuredChannels()) {
+      const toSend = this.unpushedForChannel(channel, candidates).slice(0, this.config.maxItems);
+      if (toSend.length === 0) {
+        result[channel] = 'skipped: no unpushed items';
+        continue;
+      }
+      const delivery = await this.sendToChannel(channel, buildDigest(toSend));
+      result[channel] = delivery.ok ? 'ok' : `error: ${delivery.error}`;
+      for (const item of toSend) {
+        recordPushEvent({
+          itemId: item.id,
+          channel,
+          status: delivery.ok ? 'success' : 'failed',
+          title: item.title,
+          error: delivery.error ?? undefined,
+        });
+        if (delivery.ok) sentById.set(item.id, item);
+      }
+      if (delivery.ok) this.markDelivered(channel, toSend);
     }
 
-    // Mark all candidates seen (not just the truncated batch) so the next digest moves forward.
-    this.markSeen(candidates);
     this.primed = true;
     this.lastRunAt = Date.now();
-    this.lastSentCount = toSend.length;
+    this.lastSentCount = sentById.size;
     this.lastResult = result;
-    return toSend;
+    return Array.from(sentById.values());
   }
 
   /** Send a digest of the current top threats immediately, ignoring the "seen" set. */
@@ -202,24 +240,20 @@ class Notifier {
     return { sent: items.length, result };
   }
 
+  private async sendToChannel(channel: DeliveryChannel, content: DigestContent): Promise<DeliveryResult> {
+    if (channel === 'dingtalk' && this.config.dingtalk) return sendDingtalk(this.config.dingtalk, content);
+    if (channel === 'telegram' && this.config.telegram) return sendTelegram(this.config.telegram, content);
+    if (channel === 'slack' && this.config.slack) return sendSlack(this.config.slack.webhook, content);
+    if (channel === 'webhook' && this.config.webhook) return sendWebhook(this.config.webhook.url, content);
+    return { ok: false, error: 'channel is not configured' };
+  }
+
   // Send one digest to every configured channel.
   private async dispatch(content: DigestContent): Promise<Record<string, string>> {
     const result: Record<string, string> = {};
-    if (this.config.dingtalk) {
-      const r = await sendDingtalk(this.config.dingtalk, content);
-      result.dingtalk = r.ok ? 'ok' : `error: ${r.error}`;
-    }
-    if (this.config.telegram) {
-      const r = await sendTelegram(this.config.telegram, content);
-      result.telegram = r.ok ? 'ok' : `error: ${r.error}`;
-    }
-    if (this.config.slack) {
-      const r = await sendSlack(this.config.slack.webhook, content);
-      result.slack = r.ok ? 'ok' : `error: ${r.error}`;
-    }
-    if (this.config.webhook) {
-      const r = await sendWebhook(this.config.webhook.url, content);
-      result.webhook = r.ok ? 'ok' : `error: ${r.error}`;
+    for (const channel of this.configuredChannels()) {
+      const r = await this.sendToChannel(channel, content);
+      result[channel] = r.ok ? 'ok' : `error: ${r.error}`;
     }
     return result;
   }

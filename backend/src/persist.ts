@@ -24,6 +24,16 @@ export interface TrendPoint {
   low: number;
 }
 
+export type PushEventStatus = 'success' | 'failed';
+
+export interface PushEventInput {
+  itemId: string;
+  channel: string;
+  status: PushEventStatus;
+  title: string;
+  error?: string;
+}
+
 interface Statement {
   all(...params: unknown[]): unknown[];
   get(...params: unknown[]): unknown;
@@ -61,6 +71,17 @@ export function initPersistence(): void {
       CREATE TABLE IF NOT EXISTS refresh_snapshot (
         ts INTEGER PRIMARY KEY, total INTEGER, critical INTEGER, high INTEGER, medium INTEGER, low INTEGER
       );
+      CREATE TABLE IF NOT EXISTS push_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id TEXT NOT NULL,
+        channel TEXT NOT NULL,
+        status TEXT NOT NULL,
+        title TEXT NOT NULL,
+        pushed_at TEXT NOT NULL,
+        error TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX IF NOT EXISTS idx_push_events_lookup
+        ON push_events(item_id, channel, status);
     `);
     console.log(`[persist] SQLite persistence enabled at ${dir}`);
   } catch (err) {
@@ -140,4 +161,31 @@ export function getTrend(sinceMs: number): TrendPoint[] {
     .prepare('SELECT ts, total, critical, high, medium, low FROM refresh_snapshot WHERE ts >= ? ORDER BY ts ASC')
     .all(sinceMs) as TrendPoint[];
   return rows;
+}
+
+export function successfulPushIds(channel: string, itemIds: string[]): Set<string> {
+  const found = new Set<string>();
+  if (!db || itemIds.length === 0) return found;
+  const placeholders = itemIds.map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT item_id FROM push_events WHERE channel = ? AND status = 'success' AND item_id IN (${placeholders})`,
+    )
+    .all(channel, ...itemIds) as Array<{ item_id: string }>;
+  for (const row of rows) found.add(row.item_id);
+  return found;
+}
+
+export function recordPushEvent(event: PushEventInput): void {
+  if (!db) return;
+  db.prepare(
+    'INSERT INTO push_events (item_id, channel, status, title, pushed_at, error) VALUES (?, ?, ?, ?, ?, ?)',
+  ).run(
+    event.itemId,
+    event.channel,
+    event.status,
+    event.title,
+    new Date().toISOString(),
+    event.error ?? '',
+  );
 }

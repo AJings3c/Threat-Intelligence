@@ -19,13 +19,23 @@ scheduled alert digests of new high-severity threats to **DingTalk** and **Teleg
 
 > ThreatFox / AlienVault OTX / AbuseIPDB require API keys and can be added later.
 
+## Optional social sources (API key required)
+
+| Source | Content | Required config |
+|--------|---------|-----------------|
+| **X Recent Search** | Security posts matching a configurable query | `X_BEARER_TOKEN` |
+| **Facebook Graph API** | Posts from configured security pages | `FACEBOOK_ACCESS_TOKEN`, `FACEBOOK_PAGE_IDS` |
+
+Social sources are disabled by default. If credentials are missing, they return an empty
+result and do not affect the public-feed refresh cycle.
+
 ## Architecture
 
 ```
 threat-intel-platform/
 ├── backend/      Node + Express + TypeScript API (fetch → normalize → geo → cache)
 │   └── src/
-│       ├── sources/   one module per feed (cisaKev, feodo, urlhaus, nvd)
+│       ├── sources/   one module per feed (cisaKev, feodo, urlhaus, nvd, x, facebook)
 │       ├── store.ts   in-memory aggregator + periodic refresh + stats
 │       ├── geo.ts     best-effort IP geolocation (ip-api batch)
 │       └── index.ts   Express server + REST API
@@ -33,7 +43,7 @@ threat-intel-platform/
     └── src/components/  map, feed table, CVE panel, stats, source health
 ```
 
-The backend fetches all feeds on startup and every `REFRESH_INTERVAL_MS` (default 15 min),
+The backend fetches all configured feeds on startup and every `REFRESH_INTERVAL_MS` (default 15 min),
 normalizes them into a unified `ThreatIndicator` model, and serves cached results so the
 UI stays fast and the upstream feeds are not hammered.
 
@@ -88,6 +98,9 @@ activates only when `NOTIFY_ENABLED=true` and at least one channel is configured
 
 On startup the notifier primes its baseline against the initial dataset, so the first digest
 only contains threats that appear *after* the service starts — no historical spam.
+When `DATA_DIR` is enabled, each channel also records successful/failed pushes in SQLite
+(`push_events`), so a failed channel can be retried without resending to channels that
+already succeeded.
 
 ```bash
 # enable + DingTalk (full webhook URL or just the access_token)
@@ -120,10 +133,17 @@ See `.env.example` for the full list of variables.
 | `PORT` | `4000` | Backend port |
 | `REFRESH_INTERVAL_MS` | `900000` | Feed refresh interval (15 min) |
 | `VITE_API_BASE` | `''` | Frontend API base (leave empty to use same-origin / dev proxy) |
+| `DATA_DIR` | — | Enables SQLite persistence for geo cache, first/last-seen, trends, push events |
+| `X_BEARER_TOKEN` | — | X Recent Search bearer token; enables X collection when set |
+| `X_QUERY` | security query | X Recent Search query |
+| `X_MAX_RESULTS` | `25` | X results per refresh, clamped to 10..100 |
+| `FACEBOOK_ACCESS_TOKEN` | — | Facebook Graph API token; enables Facebook collection with page IDs |
+| `FACEBOOK_PAGE_IDS` | — | Comma-separated Facebook page IDs/usernames |
+| `FACEBOOK_GRAPH_VERSION` | `v23.0` | Facebook Graph API version |
 | `NOTIFY_ENABLED` | `false` | Master switch for scheduled alert push |
 | `NOTIFY_INTERVAL_MS` | `3600000` | Digest push interval (1 h) |
 | `NOTIFY_MIN_SEVERITY` | `critical` | Minimum severity to alert (`low`/`medium`/`high`/`critical`) |
-| `NOTIFY_SOURCES` | _(all)_ | Comma list to restrict sources (`cisa_kev,feodo,urlhaus,nvd`) |
+| `NOTIFY_SOURCES` | _(all)_ | Comma list to restrict sources (`cisa_kev,feodo,urlhaus,nvd,x,facebook`) |
 | `NOTIFY_MAX_ITEMS` | `10` | Max items per digest message |
 | `DINGTALK_WEBHOOK` | — | DingTalk robot webhook URL or `access_token` |
 | `DINGTALK_SECRET` | — | DingTalk signing secret (optional) |

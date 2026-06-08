@@ -10,6 +10,8 @@ import {
   recordSeen,
   recordSnapshot,
   getTrend,
+  recordPushEvent,
+  successfulPushIds,
 } from '../src/persist.js';
 
 const dir = path.join(process.cwd(), `.tmp-persist-test-${process.pid}`);
@@ -55,5 +57,26 @@ describe('persist (node:sqlite)', () => {
     expect(points[points.length - 1].total).toBe(12);
     // Older-than-window snapshots are excluded.
     expect(getTrend(now + 1000)).toHaveLength(0);
+  });
+
+  it('tracks successful push events per channel', () => {
+    recordPushEvent({
+      itemId: 'kev:CVE-2026-0001',
+      channel: 'telegram',
+      status: 'success',
+      title: 'CVE-2026-0001',
+    });
+    recordPushEvent({
+      itemId: 'kev:CVE-2026-0002',
+      channel: 'telegram',
+      status: 'failed',
+      title: 'CVE-2026-0002',
+      error: 'timeout',
+    });
+
+    expect(successfulPushIds('telegram', ['kev:CVE-2026-0001', 'kev:CVE-2026-0002'])).toEqual(
+      new Set(['kev:CVE-2026-0001']),
+    );
+    expect(successfulPushIds('dingtalk', ['kev:CVE-2026-0001'])).toEqual(new Set());
   });
 });

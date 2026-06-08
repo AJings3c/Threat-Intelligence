@@ -5,6 +5,8 @@ export const SOURCE_LABELS: Record<ThreatSource, string> = {
   feodo: 'Feodo Tracker',
   urlhaus: 'URLhaus',
   nvd: 'NVD CVE',
+  x: 'X Security Intel',
+  facebook: 'Facebook Security Intel',
 };
 
 export const TYPE_LABELS: Record<ThreatType, string> = {
@@ -13,6 +15,7 @@ export const TYPE_LABELS: Record<ThreatType, string> = {
   malicious_url: 'Malicious URL',
   exploited_vuln: 'Exploited Vuln',
   vulnerability: 'Vulnerability',
+  social_intel: 'Social Intel',
 };
 
 export const SEVERITY_ORDER: Severity[] = ['critical', 'high', 'medium', 'low'];
