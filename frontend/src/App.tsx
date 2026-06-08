@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   CveItem,
+  ConfigStatusResponse,
   HashIntelResponse,
+  NotifyTestResponse,
   SourceHealth,
   SourceHealthHistoryPoint,
   Stats,
@@ -10,6 +12,7 @@ import type {
 } from './types';
 import {
   fetchCves,
+  fetchConfigStatus,
   fetchHashIntel,
   fetchHealth,
   fetchMap,
@@ -17,6 +20,7 @@ import {
   fetchStats,
   fetchThreats,
   fetchTrend,
+  sendNotifyTest,
 } from './api';
 import { StatsCards } from './components/StatsCards';
 import { ThreatMap } from './components/ThreatMap';
@@ -26,6 +30,8 @@ import { CvePanel } from './components/CvePanel';
 import { SourceHealthBar } from './components/SourceHealthBar';
 import { TrendChart } from './components/TrendChart';
 import { HashIntelPanel } from './components/HashIntelPanel';
+import { ConfigStatusPanel } from './components/ConfigStatusPanel';
+import { IocInvestigationPanel } from './components/IocInvestigationPanel';
 
 const REFRESH_MS = 60_000;
 
@@ -40,11 +46,16 @@ export default function App() {
     enabled: false,
     points: [],
   });
+  const [configStatus, setConfigStatus] = useState<ConfigStatusResponse | null>(null);
+  const [notifyTestResult, setNotifyTestResult] = useState<NotifyTestResponse | null>(null);
   const [threats, setThreats] = useState<ThreatIndicator[]>([]);
   const [total, setTotal] = useState(0);
   const [threatsLoading, setThreatsLoading] = useState(true);
   const [cvesLoading, setCvesLoading] = useState(true);
   const [hashesLoading, setHashesLoading] = useState(true);
+  const [configLoading, setConfigLoading] = useState(true);
+  const [configChecking, setConfigChecking] = useState(false);
+  const [notifyTestLoading, setNotifyTestLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [filters, setFilters] = useState<FilterState>({
@@ -86,6 +97,20 @@ export default function App() {
     }
   }, []);
 
+  const loadConfigStatus = useCallback(async (checking = false) => {
+    if (checking) setConfigChecking(true);
+    setConfigLoading(true);
+    try {
+      const res = await fetchConfigStatus();
+      setConfigStatus(res);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load configuration');
+    } finally {
+      setConfigLoading(false);
+      setConfigChecking(false);
+    }
+  }, []);
+
   const loadHashIntel = useCallback(async () => {
     setHashesLoading(true);
     try {
@@ -108,6 +133,10 @@ export default function App() {
     }, REFRESH_MS);
     return () => clearInterval(id);
   }, [loadOverview, loadCves, loadHashIntel]);
+
+  useEffect(() => {
+    void loadConfigStatus();
+  }, [loadConfigStatus]);
 
   // Live push updates via SSE; the interval above remains as a fallback.
   useEffect(() => {
@@ -155,6 +184,17 @@ export default function App() {
 
   const lastRefresh = stats?.lastRefresh ? new Date(stats.lastRefresh) : null;
 
+  const handleNotifyTest = useCallback(async () => {
+    setNotifyTestLoading(true);
+    try {
+      setNotifyTestResult(await sendNotifyTest());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to send test digest');
+    } finally {
+      setNotifyTestLoading(false);
+    }
+  }, []);
+
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-5 md:px-6">
       <header className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -193,6 +233,18 @@ export default function App() {
         <StatsCards stats={stats} />
       </div>
 
+      <div className="mb-5">
+        <ConfigStatusPanel
+          data={configStatus}
+          loading={configLoading}
+          checking={configChecking}
+          testResult={notifyTestResult}
+          testLoading={notifyTestLoading}
+          onRefresh={() => void loadConfigStatus(true)}
+          onSendTest={() => void handleNotifyTest()}
+        />
+      </div>
+
       <div className="mb-5 grid grid-cols-1 gap-5 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <ThreatMap points={points} />
@@ -208,6 +260,10 @@ export default function App() {
 
       <div className="mb-5">
         <HashIntelPanel data={hashIntel} loading={hashesLoading} />
+      </div>
+
+      <div className="mb-5">
+        <IocInvestigationPanel />
       </div>
 
       <div className="mb-3">

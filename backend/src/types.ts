@@ -35,6 +35,7 @@ export type IndicatorType = 'ip' | 'domain' | 'url' | 'hash' | 'cidr' | 'cve';
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
 export type Tlp = 'clear' | 'green' | 'amber' | 'red';
 export type SourceReliability = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+export type SourceHealthStatus = 'healthy' | 'disabled' | 'warming' | 'error' | 'stale' | 'deprecated';
 
 export interface ThreatIndicator {
   id: string;
@@ -84,6 +85,10 @@ export interface SourceHealth {
   source: ThreatSource;
   label: string;
   ok: boolean;
+  status: SourceHealthStatus;
+  configured: boolean;
+  credentialed: boolean;
+  requiredEnv: string[];
   stale: boolean;
   deprecated: boolean;
   deprecationMessage?: string;
@@ -109,4 +114,55 @@ export interface FetchResult<T> {
   items: T[];
   fetchedAt: number;
   error: string | null;
+}
+
+export interface SourceConfigStatus {
+  source: ThreatSource;
+  label: string;
+  configured: boolean;
+  credentialed: boolean;
+  requiredEnv: string[];
+  status: SourceHealthStatus;
+  count: number;
+  lastError: string | null;
+  lastFetched: string | null;
+}
+
+export interface ProviderConfigStatus {
+  provider: 'virustotal' | 'shodan' | 'censys';
+  configured: boolean;
+  requiredEnv: string[];
+}
+
+export type StrideCategory =
+  | 'Spoofing'
+  | 'Tampering'
+  | 'Repudiation'
+  | 'Information Disclosure'
+  | 'Denial of Service'
+  | 'Elevation of Privilege';
+
+export interface ThreatModelScenario {
+  id: string;
+  title: string;
+  stride: StrideCategory;
+  severity: Severity;
+  confidence: number;
+  evidence: string[];
+  recommendations: string[];
+}
+
+export interface IocInvestigation {
+  indicator: string;
+  indicatorType: IndicatorType;
+  exactMatches: ThreatIndicator[];
+  relatedIndicators: ThreatIndicator[];
+  sourceSummary: Array<{ source: ThreatSource; count: number }>;
+  model: {
+    posture: 'matched' | 'related_only' | 'no_match';
+    highestSeverity: Severity | null;
+    confidence: number;
+    scenarios: ThreatModelScenario[];
+    nextSteps: string[];
+  };
 }

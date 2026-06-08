@@ -34,7 +34,7 @@ function parseTime(value: string | undefined): string | undefined {
 
 function extractQuoted(pattern: string, property: string): string | null {
   const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`${escaped}\\s*=\\s*'([^']+)'`, 'i');
+  const re = new RegExp(`${escaped}\\s*(?:=|ISSUBSET)\\s*'([^']+)'`, 'i');
   return pattern.match(re)?.[1] ?? null;
 }
 

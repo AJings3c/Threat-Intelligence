@@ -1,4 +1,4 @@
-import type { IndicatorType } from './types.js';
+import type { IndicatorType, ProviderConfigStatus } from './types.js';
 import { errorMessage, fetchWithTimeout } from './util.js';
 
 export interface EnrichmentResult {
@@ -184,4 +184,24 @@ export function parseIndicatorType(value: string | undefined): IndicatorType | n
     return value;
   }
   return null;
+}
+
+export function enrichmentConfigStatus(env: NodeJS.ProcessEnv = process.env): ProviderConfigStatus[] {
+  return [
+    {
+      provider: 'virustotal',
+      configured: Boolean(env.VIRUSTOTAL_API_KEY?.trim()),
+      requiredEnv: ['VIRUSTOTAL_API_KEY'],
+    },
+    {
+      provider: 'shodan',
+      configured: Boolean(env.SHODAN_API_KEY?.trim()),
+      requiredEnv: ['SHODAN_API_KEY'],
+    },
+    {
+      provider: 'censys',
+      configured: Boolean(env.CENSYS_API_ID?.trim() && env.CENSYS_API_SECRET?.trim()),
+      requiredEnv: ['CENSYS_API_ID', 'CENSYS_API_SECRET'],
+    },
+  ];
 }

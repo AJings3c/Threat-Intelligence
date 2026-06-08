@@ -5,8 +5,9 @@
 The platform pulls indicators from multiple open feeds, normalizes them into a single
 data model, geolocates IP indicators, and surfaces everything through a real-time
 dashboard: a world threat map, a live indicator feed, a latest-CVE panel, severity
-filtering/search, and per-source freshness/health monitoring. It can also push
-scheduled alert digests of new high-severity threats to **DingTalk** and **Telegram**.
+filtering/search, IOC investigation, STRIDE-style threat modeling, and per-source
+freshness/health monitoring. It can also push scheduled alert digests of new
+high-severity threats to **DingTalk**, **Telegram**, **Slack**, or a generic webhook.
 
 ## Data sources (all public, no API key required)
 
@@ -22,7 +23,7 @@ scheduled alert digests of new high-severity threats to **DingTalk** and **Teleg
 | **SANS ISC DShield** | Top attacking IPv4 subnets over recent days | Scanner networks |
 | **NVD + FIRST EPSS** | Latest published CVEs with exploitation probability | Vulnerabilities |
 
-> AlienVault OTX / AbuseIPDB / VirusTotal require API keys and can be added later.
+> AlienVault OTX / AbuseIPDB / VirusTotal / Shodan / Censys require API keys.
 
 ## Optional credentialed sources
 
@@ -68,9 +69,11 @@ UI stays fast and the upstream feeds are not hammered.
 | `GET /api/cve` | Latest CVEs from NVD |
 | `GET /api/hashes` | Hash IOCs and malware-family aggregations |
 | `GET /api/enrich` | On-demand enrichment, query `indicator` + `type` |
+| `GET /api/investigate` | Local IOC investigation + STRIDE-style threat model, query `indicator` and optional `type` |
 | `GET /api/stats` | Aggregate counts (by source/type/severity, top countries) |
 | `GET /api/sources/health` | Per-source freshness and error state |
 | `GET /api/sources/history` | Historical source health samples (requires `DATA_DIR`) |
+| `GET /api/config/status` | Non-secret integration configuration status |
 | `GET /api/notify/status` | Alert notifier config + last-run state |
 | `POST /api/notify/test` | Send a test digest to configured channels now |
 | `GET /taxii2/` | TAXII 2.1 discovery document |
@@ -113,10 +116,35 @@ same bearer/header/query token options as the REST API.
 | `npm run typecheck` | Type-check both workspaces |
 | `npm run lint` | Lint both workspaces |
 
-## Alerting (DingTalk / Telegram scheduled push)
+## IOC investigation and threat modeling
+
+Use the dashboard's **IOC Investigation & Threat Model** panel or call the API directly:
+
+```bash
+curl 'http://localhost:4000/api/investigate?indicator=1.2.3.4&type=ip'
+curl 'http://localhost:4000/api/investigate?indicator=example.com'
+```
+
+The response contains exact local matches, related indicators, source summary, confidence,
+highest severity, and STRIDE-style scenarios with evidence and mitigation steps. This is
+local evidence modeling, not a replacement for a full architecture data-flow diagram review.
+
+## Configuration checks
+
+Use the dashboard's **Configuration Check** panel or call:
+
+```bash
+curl http://localhost:4000/api/config/status
+curl -X POST http://localhost:4000/api/notify/test
+```
+
+`/api/config/status` never returns secret values. Credentialed sources show as `disabled`
+until the required environment variables are present.
+
+## Alerting (DingTalk / Telegram / Slack / Webhook scheduled push)
 
 The backend can periodically push a digest of **new** threats (deduplicated by indicator ID,
-filtered by severity/source) to DingTalk and/or Telegram robots. It is **off by default** and
+filtered by severity/source) to DingTalk, Telegram, Slack, or a generic webhook. It is **off by default** and
 activates only when `NOTIFY_ENABLED=true` and at least one channel is configured.
 
 On startup the notifier primes its baseline against the initial dataset, so the first digest
@@ -186,6 +214,8 @@ See `.env.example` for the full list of variables.
 | `DINGTALK_SECRET` | — | DingTalk signing secret (optional) |
 | `TELEGRAM_BOT_TOKEN` | — | Telegram bot token from BotFather |
 | `TELEGRAM_CHAT_ID` | — | Telegram chat/group/channel ID |
+| `SLACK_WEBHOOK` | — | Slack incoming webhook URL |
+| `WEBHOOK_URL` | — | Generic webhook URL for JSON digests |
 
 ## License
 

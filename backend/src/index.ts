@@ -19,7 +19,7 @@ import {
   TAXII_MEDIA_TYPE,
   taxiiCollection,
 } from './taxii.js';
-import { enrichIndicator, parseIndicatorType } from './enrich.js';
+import { enrichIndicator, enrichmentConfigStatus, parseIndicatorType } from './enrich.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS ?? 15 * 60 * 1000);
@@ -208,12 +208,31 @@ api.get('/enrich', (req, res) => {
     .catch((err) => res.status(500).json({ error: errorMessage(err) }));
 });
 
+api.get('/investigate', (req, res) => {
+  const indicator = typeof req.query.indicator === 'string' ? req.query.indicator.trim() : '';
+  const indicatorType = parseIndicatorType(typeof req.query.type === 'string' ? req.query.type : undefined);
+  if (!indicator) {
+    res.status(400).json({ error: 'missing indicator query parameter' });
+    return;
+  }
+  res.json(store.investigateIndicator(indicator, indicatorType ?? undefined));
+});
+
 api.get('/stats', (_req, res) => {
   res.json(store.getStats());
 });
 
 api.get('/sources/health', (_req, res) => {
   res.json({ sources: store.getHealth() });
+});
+
+api.get('/config/status', (_req, res) => {
+  res.json({
+    sources: store.getSourceConfigStatus(),
+    enrichmentProviders: enrichmentConfigStatus(),
+    notify: notifier.status(),
+    persistence: { enabled: isPersistEnabled() },
+  });
 });
 
 // Historical source-health samples (requires persistence; empty when disabled).

@@ -18,17 +18,23 @@ function historySummary(points: SourceHealthHistoryPoint[]): Map<ThreatSource, n
 }
 
 function statusColor(source: SourceHealth): string {
-  if (!source.ok) return 'bg-red-400';
+  if (source.status === 'disabled') return 'bg-slate-500';
+  if (source.status === 'error') return 'bg-red-400';
   if (source.deprecated) return 'bg-purple-300';
   if (source.stale) return 'bg-yellow-300';
+  if (source.status === 'warming') return 'bg-sky-300';
   return 'bg-emerald-400';
 }
 
 function tooltip(source: SourceHealth, failures: number): string {
   const status =
-    source.lastError ??
-    source.deprecationMessage ??
-    (source.stale ? 'stale source data' : `Updated ${freshness(source.ageMs)}`);
+    source.status === 'disabled'
+      ? `not configured${source.requiredEnv.length > 0 ? ` (${source.requiredEnv.join(', ')})` : ''}`
+      : source.status === 'warming'
+        ? 'warming up'
+        : source.lastError ??
+          source.deprecationMessage ??
+          (source.stale ? 'stale source data' : `Updated ${freshness(source.ageMs)}`);
   return failures > 0 ? `${status} · ${failures} historical issue(s)` : status;
 }
 
@@ -43,7 +49,7 @@ export function SourceHealthBar({
   return (
     <div className="flex flex-wrap items-center gap-2">
       {sources.map((s) => {
-        const issueCount = failures.get(s.source) ?? 0;
+        const issueCount = s.status === 'disabled' ? 0 : failures.get(s.source) ?? 0;
         return (
           <div
             key={s.source}

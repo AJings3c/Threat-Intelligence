@@ -277,6 +277,11 @@ describe('parseTaxiiObjects', () => {
           labels: ['malware'],
         },
         {
+          type: 'indicator',
+          id: 'indicator--3',
+          pattern: "[ipv4-addr:value ISSUBSET '203.0.113.0/24']",
+        },
+        {
           type: 'vulnerability',
           id: 'vulnerability--1',
           name: 'CVE-2026-0002',
@@ -284,7 +289,7 @@ describe('parseTaxiiObjects', () => {
       ],
     });
 
-    expect(items).toHaveLength(3);
+    expect(items).toHaveLength(4);
     expect(items[0]).toMatchObject({
       source: 'taxii_import',
       indicator: '198.51.100.2',
@@ -292,7 +297,8 @@ describe('parseTaxiiObjects', () => {
       severity: 'high',
     });
     expect(items[1]).toMatchObject({ indicatorType: 'hash', type: 'malicious_hash' });
-    expect(items[2]).toMatchObject({ indicator: 'CVE-2026-0002', indicatorType: 'cve' });
+    expect(items[2]).toMatchObject({ indicator: '203.0.113.0/24', indicatorType: 'cidr' });
+    expect(items[3]).toMatchObject({ indicator: 'CVE-2026-0002', indicatorType: 'cve' });
   });
 });
 

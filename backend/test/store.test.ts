@@ -127,6 +127,13 @@ beforeEach(() => {
   store.resetForTest();
   vi.clearAllMocks();
   delete process.env.REFRESH_FEODO_INTERVAL_MS;
+  delete process.env.X_BEARER_TOKEN;
+  delete process.env.FACEBOOK_ACCESS_TOKEN;
+  delete process.env.FACEBOOK_PAGE_IDS;
+  delete process.env.PHISHTANK_APP_KEY;
+  delete process.env.ABUSEIPDB_API_KEY;
+  delete process.env.OTX_API_KEY;
+  delete process.env.TAXII_IMPORT_OBJECTS_URL;
   mockX.mockResolvedValue(ok([]));
   mockFacebook.mockResolvedValue(ok([]));
   mockOpenPhish.mockResolvedValue(ok([]));
@@ -213,6 +220,22 @@ describe('ThreatStore resilience', () => {
     expect(feodoHealth.stale).toBe(true);
     expect(feodoHealth.refreshIntervalMs).toBe(1);
   });
+
+  it('marks credentialed sources as disabled when required env vars are missing', async () => {
+    mockKev.mockResolvedValue(ok([]));
+    mockFeodo.mockResolvedValue(ok([]));
+    mockUrlhaus.mockResolvedValue(ok([]));
+    mockNvd.mockResolvedValue(ok([]));
+
+    await store.refresh();
+
+    const health = store.getHealth();
+    const otx = health.find((h) => h.source === 'otx')!;
+    expect(otx.status).toBe('disabled');
+    expect(otx.ok).toBe(false);
+    expect(otx.configured).toBe(false);
+    expect(otx.requiredEnv).toContain('OTX_API_KEY');
+  });
 });
 
 describe('ThreatStore hash intelligence', () => {
@@ -285,5 +308,97 @@ describe('ThreatStore KEV↔NVD correlation', () => {
     expect(matched.knownExploited).toBe(true);
     expect(matched.severity).toBe('high');
     expect(unmatched.knownExploited).toBe(false);
+  });
+});
+
+describe('ThreatStore IOC investigation', () => {
+  it('returns local matches, related indicators, and STRIDE scenarios', async () => {
+    const family = 'ExampleLoader';
+    mockKev.mockResolvedValue(ok([]));
+    mockFeodo.mockResolvedValue(ok([]));
+    mockUrlhaus.mockResolvedValue(ok([]));
+    mockNvd.mockResolvedValue(ok([]));
+    mockMalwareBazaar.mockResolvedValue(
+      ok([
+        {
+          ...indicator('hash-exact', 'malwarebazaar'),
+          type: 'malicious_hash',
+          indicator: 'c'.repeat(64),
+          indicatorType: 'hash',
+          malwareFamily: family,
+          severity: 'critical',
+        },
+        {
+          ...indicator('hash-related', 'malwarebazaar'),
+          type: 'malicious_hash',
+          indicator: 'd'.repeat(64),
+          indicatorType: 'hash',
+          malwareFamily: family,
+          severity: 'high',
+        },
+      ]),
+    );
+
+    await store.refresh();
+    const result = store.investigateIndicator('c'.repeat(64));
+
+    expect(result.indicatorType).toBe('hash');
+    expect(result.exactMatches).toHaveLength(1);
+    expect(result.relatedIndicators.some((item) => item.id === 'hash-related')).toBe(true);
+    expect(result.model.posture).toBe('matched');
+    expect(result.model.scenarios.some((scenario) => scenario.stride === 'Tampering')).toBe(true);
+  });
+
+  it('relates domains to URL hosts when no exact indicator exists', async () => {
+    mockKev.mockResolvedValue(ok([]));
+    mockFeodo.mockResolvedValue(ok([]));
+    mockUrlhaus.mockResolvedValue(
+      ok([
+        {
+          ...indicator('url-related', 'urlhaus'),
+          type: 'malicious_url',
+          indicator: 'https://login.example.test/payload',
+          indicatorType: 'url',
+          severity: 'high',
+          tags: ['phishing'],
+        },
+      ]),
+    );
+    mockNvd.mockResolvedValue(ok([]));
+
+    await store.refresh();
+    const result = store.investigateIndicator('example.test');
+
+    expect(result.exactMatches).toHaveLength(0);
+    expect(result.relatedIndicators.some((item) => item.id === 'url-related')).toBe(true);
+    expect(result.model.posture).toBe('related_only');
+    expect(result.model.scenarios.some((scenario) => scenario.stride === 'Spoofing')).toBe(true);
+  });
+
+  it('relates IP searches to matching CIDR indicators', async () => {
+    mockKev.mockResolvedValue(ok([]));
+    mockFeodo.mockResolvedValue(ok([]));
+    mockUrlhaus.mockResolvedValue(ok([]));
+    mockNvd.mockResolvedValue(ok([]));
+    mockSpamhausDrop.mockResolvedValue(
+      ok([
+        {
+          ...indicator('cidr-related', 'spamhaus_drop'),
+          type: 'malicious_network',
+          indicator: '203.0.113.0/24',
+          indicatorType: 'cidr',
+          severity: 'medium',
+          tags: ['drop'],
+        },
+      ]),
+    );
+
+    await store.refresh();
+    const result = store.investigateIndicator('203.0.113.42', 'ip');
+
+    expect(result.exactMatches).toHaveLength(0);
+    expect(result.relatedIndicators.some((item) => item.id === 'cidr-related')).toBe(true);
+    expect(result.model.posture).toBe('related_only');
+    expect(result.model.scenarios.some((scenario) => scenario.stride === 'Denial of Service')).toBe(true);
   });
 });

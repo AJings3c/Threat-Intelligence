@@ -7,6 +7,12 @@ import type {
   ThreatType,
   FetchResult,
   MalwareFamilySummary,
+  IndicatorType,
+  IocInvestigation,
+  SourceConfigStatus,
+  StrideCategory,
+  ThreatModelScenario,
+  SourceHealthStatus,
 } from './types.js';
 import { fetchCisaKev } from './sources/cisaKev.js';
 import { fetchFeodo } from './sources/feodo.js';
@@ -26,7 +32,8 @@ import { fetchTaxiiImport } from './sources/taxiiImport.js';
 import { geolocate, isIpv4 } from './geo.js';
 import { dedupeIndicators } from './correlate.js';
 import { recordSeen, recordSnapshot, recordSourceHealthHistory } from './persist.js';
-import { sourceProfile } from './sourceProfiles.js';
+import { errorMessage } from './util.js';
+import { isSourceConfigured, sourceProfile, sourceRequiredEnv } from './sourceProfiles.js';
 
 // Hard server-side cap so a client can't request an unbounded result set.
 export const MAX_QUERY_LIMIT = 2000;
@@ -60,6 +67,7 @@ type IocSource = Exclude<ThreatSource, 'nvd'>;
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
+const SEVERITY_RANK: Record<Severity, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 
 export const DEFAULT_SOURCE_REFRESH_INTERVAL_MS: Record<ThreatSource, number> = {
   cisa_kev: 2 * HOUR,
@@ -265,7 +273,11 @@ class ThreatStore {
     fetcher: () => Promise<FetchResult<T>>,
   ): Promise<FetchResult<T> | null> {
     if (!this.shouldFetch(source)) return null;
-    return fetcher();
+    try {
+      return await fetcher();
+    } catch (err) {
+      return { items: [], fetchedAt: Date.now(), error: errorMessage(err) };
+    }
   }
 
   // Replace a source's retained items only when the fetch succeeded; otherwise keep
@@ -505,6 +517,302 @@ class ThreatStore {
     };
   }
 
+  private inferIndicatorType(value: string): IndicatorType {
+    const trimmed = value.trim();
+    if (/^CVE-\d{4}-\d{4,}$/i.test(trimmed)) return 'cve';
+    if (/^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$/i.test(trimmed)) return 'hash';
+    if (/^(?:\d{1,3}\.){3}\d{1,3}\/(?:[0-9]|[12][0-9]|3[0-2])$/.test(trimmed)) return 'cidr';
+    if (isIpv4(trimmed)) return 'ip';
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return 'url';
+    } catch {
+      // not a URL
+    }
+    return 'domain';
+  }
+
+  private hostOf(value: string): string | null {
+    const trimmed = value.trim().toLowerCase().replace(/\.$/, '');
+    if (!trimmed) return null;
+    try {
+      return new URL(trimmed).hostname.toLowerCase().replace(/\.$/, '');
+    } catch {
+      return trimmed.includes('/') ? null : trimmed;
+    }
+  }
+
+  private indicatorHosts(item: ThreatIndicator): string[] {
+    if (item.indicatorType !== 'domain' && item.indicatorType !== 'url') return [];
+    const host = this.hostOf(item.indicator);
+    return host ? [host] : [];
+  }
+
+  private domainsRelated(a: string, b: string): boolean {
+    return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
+  }
+
+  private ipv4ToNumber(value: string): number | null {
+    if (!isIpv4(value)) return null;
+    const parts = value.split('.').map((part) => Number(part));
+    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+      return null;
+    }
+    return parts.reduce((acc, part) => (acc << 8) + part, 0) >>> 0;
+  }
+
+  private cidrRange(value: string): { start: number; end: number } | null {
+    const match = /^((?:\d{1,3}\.){3}\d{1,3})\/([0-9]|[12][0-9]|3[0-2])$/.exec(value.trim());
+    if (!match) return null;
+    const ip = this.ipv4ToNumber(match[1]);
+    if (ip === null) return null;
+    const prefix = Number(match[2]);
+    const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+    const start = (ip & mask) >>> 0;
+    const size = 2 ** (32 - prefix);
+    return { start, end: start + size - 1 };
+  }
+
+  private networkRelated(item: ThreatIndicator, value: string, type: IndicatorType): boolean {
+    if (type !== 'ip' && type !== 'cidr') return false;
+    if (item.indicatorType !== 'ip' && item.indicatorType !== 'cidr') return false;
+
+    const requestedIp = type === 'ip' ? this.ipv4ToNumber(value) : null;
+    const requestedRange = type === 'cidr' ? this.cidrRange(value) : null;
+    const itemIp = item.indicatorType === 'ip' ? this.ipv4ToNumber(item.indicator) : null;
+    const itemRange = item.indicatorType === 'cidr' ? this.cidrRange(item.indicator) : null;
+
+    if (requestedIp !== null && itemRange) return requestedIp >= itemRange.start && requestedIp <= itemRange.end;
+    if (requestedRange && itemIp !== null) return itemIp >= requestedRange.start && itemIp <= requestedRange.end;
+    if (requestedRange && itemRange) {
+      return requestedRange.start <= itemRange.end && itemRange.start <= requestedRange.end;
+    }
+    return requestedIp !== null && itemIp !== null && requestedIp === itemIp;
+  }
+
+  private observableRelated(item: ThreatIndicator, value: string, type: IndicatorType): boolean {
+    if (this.networkRelated(item, value, type)) return true;
+    if (type !== 'domain' && type !== 'url') return false;
+    const requestedHost = this.hostOf(value);
+    if (!requestedHost) return false;
+    return this.indicatorHosts(item).some((host) => this.domainsRelated(host, requestedHost));
+  }
+
+  private severityMax(items: ThreatIndicator[]): Severity | null {
+    let out: Severity | null = null;
+    for (const item of items) {
+      if (!out || SEVERITY_RANK[item.severity] > SEVERITY_RANK[out]) out = item.severity;
+    }
+    return out;
+  }
+
+  private sourceSummary(items: ThreatIndicator[]): Array<{ source: ThreatSource; count: number }> {
+    const counts = new Map<ThreatSource, number>();
+    for (const item of items) {
+      for (const source of item.sources ?? [item.source]) {
+        counts.set(source, (counts.get(source) ?? 0) + 1);
+      }
+    }
+    return Array.from(counts.entries())
+      .map(([source, count]) => ({ source, count }))
+      .sort((a, b) => b.count - a.count || a.source.localeCompare(b.source));
+  }
+
+  private relatedIndicators(matches: ThreatIndicator[], value: string, type: IndicatorType): ThreatIndicator[] {
+    const related = new Map<string, ThreatIndicator>();
+    const matchIds = new Set(matches.map((item) => item.id));
+    const families = new Set(matches.map((item) => item.malwareFamily).filter((x): x is string => Boolean(x)));
+    const tags = new Set(matches.flatMap((item) => item.tags).map((tag) => tag.toLowerCase()));
+    const sources = new Set(matches.flatMap((item) => item.sources ?? [item.source]));
+
+    for (const item of this.indicators) {
+      if (matchIds.has(item.id)) continue;
+      let score = 0;
+      if (item.indicator.toLowerCase().includes(value.toLowerCase())) score += 4;
+      if (this.observableRelated(item, value, type)) score += 4;
+      if (families.size > 0 && item.malwareFamily && families.has(item.malwareFamily)) score += 3;
+      if ((item.sources ?? [item.source]).some((source) => sources.has(source))) score += 1;
+      if (item.tags.some((tag) => tags.has(tag.toLowerCase()))) score += 2;
+      if (item.indicatorType === type) score += 1;
+      if (score >= 3) related.set(item.id, item);
+      if (related.size >= 30) break;
+    }
+    return Array.from(related.values()).slice(0, 20);
+  }
+
+  private scenario(
+    id: string,
+    title: string,
+    stride: StrideCategory,
+    severity: Severity,
+    confidence: number,
+    evidence: string[],
+    recommendations: string[],
+  ): ThreatModelScenario {
+    return { id, title, stride, severity, confidence, evidence, recommendations };
+  }
+
+  private buildThreatModel(
+    indicator: string,
+    indicatorType: IndicatorType,
+    exactMatches: ThreatIndicator[],
+    relatedIndicators: ThreatIndicator[],
+  ): IocInvestigation['model'] {
+    const evidenceItems = exactMatches.length > 0 ? exactMatches : relatedIndicators;
+    const highestSeverity = this.severityMax(evidenceItems);
+    const confidence = Math.max(0, ...evidenceItems.map((item) => item.confidence ?? 0));
+    const sourceLabels = this.sourceSummary(evidenceItems)
+      .slice(0, 4)
+      .map((item) => SOURCE_LABELS[item.source])
+      .join(', ');
+    const evidence = [
+      evidenceItems.length > 0 ? `${evidenceItems.length} local indicator(s) matched or related` : 'No local match',
+      sourceLabels ? `Sources: ${sourceLabels}` : null,
+      confidence > 0 ? `Max confidence: ${confidence}` : null,
+    ].filter((item): item is string => Boolean(item));
+    const severity = highestSeverity ?? 'medium';
+    const scenarios: ThreatModelScenario[] = [];
+
+    if (indicatorType === 'domain' || indicatorType === 'url') {
+      scenarios.push(
+        this.scenario(
+          'spoofing-phishing',
+          'User or service impersonation through malicious web content',
+          'Spoofing',
+          severity,
+          confidence,
+          evidence,
+          ['Block the domain/URL at proxy and DNS layers', 'Search proxy, DNS, and email logs for recent access'],
+        ),
+      );
+      scenarios.push(
+        this.scenario(
+          'credential-exposure',
+          'Credential or session data exposure after user interaction',
+          'Information Disclosure',
+          severity,
+          confidence,
+          evidence,
+          ['Force password reset for affected users', 'Review MFA prompts and suspicious session creation'],
+        ),
+      );
+    } else if (indicatorType === 'ip' || indicatorType === 'cidr') {
+      scenarios.push(
+        this.scenario(
+          'scanner-or-c2-network',
+          'Command-and-control, scanner, or abusive network communication',
+          'Denial of Service',
+          severity,
+          confidence,
+          evidence,
+          ['Block or rate-limit the IP/CIDR at perimeter controls', 'Review firewall, EDR, and NetFlow telemetry'],
+        ),
+      );
+      scenarios.push(
+        this.scenario(
+          'network-trust-abuse',
+          'Trusted network path abused for lateral access or callback traffic',
+          'Elevation of Privilege',
+          severity,
+          confidence,
+          evidence,
+          ['Check outbound connections from privileged assets', 'Add temporary detections for repeated callbacks'],
+        ),
+      );
+    } else if (indicatorType === 'hash') {
+      scenarios.push(
+        this.scenario(
+          'malware-execution',
+          'Malware execution or persistence on endpoint assets',
+          'Tampering',
+          severity,
+          confidence,
+          evidence,
+          ['Hunt the hash in EDR and file telemetry', 'Quarantine affected hosts and collect process ancestry'],
+        ),
+      );
+      scenarios.push(
+        this.scenario(
+          'privilege-chain',
+          'Payload used to escalate privileges or stage follow-on tooling',
+          'Elevation of Privilege',
+          severity,
+          confidence,
+          evidence,
+          ['Review child processes, service creation, and credential access events', 'Rotate exposed credentials'],
+        ),
+      );
+    } else if (indicatorType === 'cve') {
+      scenarios.push(
+        this.scenario(
+          'vulnerability-exploitation',
+          'Known vulnerability exploitation against exposed assets',
+          'Elevation of Privilege',
+          severity,
+          confidence,
+          evidence,
+          ['Map the CVE to exposed software inventory', 'Prioritize patching or compensating controls'],
+        ),
+      );
+      scenarios.push(
+        this.scenario(
+          'data-impact',
+          'Exploitation may expose data or alter system state',
+          'Information Disclosure',
+          severity,
+          confidence,
+          evidence,
+          ['Review exploitability, EPSS, and KEV status', 'Add monitoring for known exploitation patterns'],
+        ),
+      );
+    }
+
+    return {
+      posture: exactMatches.length > 0 ? 'matched' : relatedIndicators.length > 0 ? 'related_only' : 'no_match',
+      highestSeverity,
+      confidence,
+      scenarios,
+      nextSteps: [
+        `Run enrichment for ${indicatorType} ${indicator}`,
+        'Pivot on shared sources, tags, malware family, and first/last seen timestamps',
+        'Document impacted assets, trust boundaries, mitigations, and owner decisions',
+      ],
+    };
+  }
+
+  investigateIndicator(indicator: string, requestedType?: IndicatorType): IocInvestigation {
+    const value = indicator.trim();
+    const indicatorType = requestedType ?? this.inferIndicatorType(value);
+    const normalized = value.toLowerCase();
+    const exactMatches = this.indicators.filter(
+      (item) => item.indicatorType === indicatorType && item.indicator.toLowerCase() === normalized,
+    );
+    const related = this.relatedIndicators(exactMatches, value, indicatorType);
+    const evidenceItems = exactMatches.length > 0 ? exactMatches : related;
+    return {
+      indicator: value,
+      indicatorType,
+      exactMatches,
+      relatedIndicators: related,
+      sourceSummary: this.sourceSummary(evidenceItems),
+      model: this.buildThreatModel(value, indicatorType, exactMatches, related),
+    };
+  }
+
+  getSourceConfigStatus(): SourceConfigStatus[] {
+    return this.getHealth().map((source) => ({
+      source: source.source,
+      label: source.label,
+      configured: source.configured,
+      credentialed: source.credentialed,
+      requiredEnv: source.requiredEnv,
+      status: source.status,
+      count: source.count,
+      lastError: source.lastError,
+      lastFetched: source.lastFetched,
+    }));
+  }
+
   getHealth(): SourceHealth[] {
     const now = Date.now();
     return (Object.keys(this.state) as ThreatSource[]).map((source) => {
@@ -512,11 +820,28 @@ class ThreatStore {
       const ageMs = s.fetchedAt ? now - s.fetchedAt : null;
       const refreshIntervalMs = sourceRefreshIntervalMs(source);
       const stale = ageMs !== null && refreshIntervalMs > 0 && ageMs > refreshIntervalMs * 2;
-      const deprecated = sourceProfile(source).deprecated;
+      const profile = sourceProfile(source);
+      const deprecated = profile.deprecated;
+      const configured = isSourceConfigured(source);
+      const status: SourceHealthStatus = !configured
+        ? 'disabled'
+        : s.error
+          ? 'error'
+          : deprecated
+            ? 'deprecated'
+            : stale
+              ? 'stale'
+              : s.fetchedAt
+                ? 'healthy'
+                : 'warming';
       return {
         source,
         label: SOURCE_LABELS[source],
-        ok: s.error === null && s.fetchedAt !== null,
+        ok: configured && s.error === null && s.fetchedAt !== null,
+        status,
+        configured,
+        credentialed: Boolean(profile.credentialed),
+        requiredEnv: sourceRequiredEnv(source),
         stale,
         deprecated: Boolean(deprecated),
         deprecationMessage: deprecated
