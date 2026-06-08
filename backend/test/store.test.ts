@@ -383,6 +383,20 @@ describe('ThreatStore IOC investigation', () => {
     expect(result.model.scenarios.some((scenario) => scenario.stride === 'Spoofing')).toBe(true);
   });
 
+  it('returns Chinese IOC model text when requested', async () => {
+    mockKev.mockResolvedValue(ok([]));
+    mockFeodo.mockResolvedValue(ok([]));
+    mockUrlhaus.mockResolvedValue(ok([]));
+    mockNvd.mockResolvedValue(ok([]));
+
+    await store.refresh();
+    const result = store.investigateIndicator('example.test', 'domain', { language: 'zh' });
+
+    expect(result.model.scenarios[0].title).toContain('恶意网页');
+    expect(result.model.scenarios[0].evidence[0]).toBe('本地暂无命中');
+    expect(result.model.nextSteps[0]).toContain('情报富化');
+  });
+
   it('relates IP searches to matching CIDR indicators', async () => {
     mockKev.mockResolvedValue(ok([]));
     mockFeodo.mockResolvedValue(ok([]));

@@ -14,6 +14,7 @@ import type {
   ThreatModelScenario,
   SourceHealthStatus,
   InvestigationHistoryEntry,
+  Language,
 } from './types.js';
 import crypto from 'node:crypto';
 import { fetchCisaKev } from './sources/cisaKev.js';
@@ -668,6 +669,7 @@ class ThreatStore {
     indicatorType: IndicatorType,
     exactMatches: ThreatIndicator[],
     relatedIndicators: ThreatIndicator[],
+    language: Language,
   ): IocInvestigation['model'] {
     const evidenceItems = exactMatches.length > 0 ? exactMatches : relatedIndicators;
     const highestSeverity = this.severityMax(evidenceItems);
@@ -677,103 +679,126 @@ class ThreatStore {
       .map((item) => SOURCE_LABELS[item.source])
       .join(', ');
     const evidence = [
-      evidenceItems.length > 0 ? `${evidenceItems.length} local indicator(s) matched or related` : 'No local match',
-      sourceLabels ? `Sources: ${sourceLabels}` : null,
-      confidence > 0 ? `Max confidence: ${confidence}` : null,
+      evidenceItems.length > 0
+        ? language === 'zh'
+          ? `本地命中或关联 ${evidenceItems.length} 条指标`
+          : `${evidenceItems.length} local indicator(s) matched or related`
+        : language === 'zh'
+          ? '本地暂无命中'
+          : 'No local match',
+      sourceLabels ? (language === 'zh' ? `来源：${sourceLabels}` : `Sources: ${sourceLabels}`) : null,
+      confidence > 0 ? (language === 'zh' ? `最高置信度：${confidence}` : `Max confidence: ${confidence}`) : null,
     ].filter((item): item is string => Boolean(item));
     const severity = highestSeverity ?? 'medium';
     const scenarios: ThreatModelScenario[] = [];
+    const zh = language === 'zh';
 
     if (indicatorType === 'domain' || indicatorType === 'url') {
       scenarios.push(
         this.scenario(
           'spoofing-phishing',
-          'User or service impersonation through malicious web content',
+          zh ? '通过恶意网页内容进行用户或服务仿冒' : 'User or service impersonation through malicious web content',
           'Spoofing',
           severity,
           confidence,
           evidence,
-          ['Block the domain/URL at proxy and DNS layers', 'Search proxy, DNS, and email logs for recent access'],
+          zh
+            ? ['在代理和 DNS 层阻断该域名或 URL', '检索代理、DNS 和邮件日志中的近期访问记录']
+            : ['Block the domain/URL at proxy and DNS layers', 'Search proxy, DNS, and email logs for recent access'],
         ),
       );
       scenarios.push(
         this.scenario(
           'credential-exposure',
-          'Credential or session data exposure after user interaction',
+          zh ? '用户交互后可能泄露凭据或会话数据' : 'Credential or session data exposure after user interaction',
           'Information Disclosure',
           severity,
           confidence,
           evidence,
-          ['Force password reset for affected users', 'Review MFA prompts and suspicious session creation'],
+          zh
+            ? ['对受影响用户强制重置密码', '复核 MFA 提示和异常会话创建记录']
+            : ['Force password reset for affected users', 'Review MFA prompts and suspicious session creation'],
         ),
       );
     } else if (indicatorType === 'ip' || indicatorType === 'cidr') {
       scenarios.push(
         this.scenario(
           'scanner-or-c2-network',
-          'Command-and-control, scanner, or abusive network communication',
+          zh ? '命令控制、扫描器或滥用网络通信' : 'Command-and-control, scanner, or abusive network communication',
           'Denial of Service',
           severity,
           confidence,
           evidence,
-          ['Block or rate-limit the IP/CIDR at perimeter controls', 'Review firewall, EDR, and NetFlow telemetry'],
+          zh
+            ? ['在边界控制点阻断或限速该 IP/CIDR', '复核防火墙、EDR 和 NetFlow 遥测数据']
+            : ['Block or rate-limit the IP/CIDR at perimeter controls', 'Review firewall, EDR, and NetFlow telemetry'],
         ),
       );
       scenarios.push(
         this.scenario(
           'network-trust-abuse',
-          'Trusted network path abused for lateral access or callback traffic',
+          zh ? '可信网络路径被用于横向移动或回连流量' : 'Trusted network path abused for lateral access or callback traffic',
           'Elevation of Privilege',
           severity,
           confidence,
           evidence,
-          ['Check outbound connections from privileged assets', 'Add temporary detections for repeated callbacks'],
+          zh
+            ? ['检查高权限资产的外联连接', '为重复回连行为添加临时检测规则']
+            : ['Check outbound connections from privileged assets', 'Add temporary detections for repeated callbacks'],
         ),
       );
     } else if (indicatorType === 'hash') {
       scenarios.push(
         this.scenario(
           'malware-execution',
-          'Malware execution or persistence on endpoint assets',
+          zh ? '终端资产上的恶意代码执行或持久化' : 'Malware execution or persistence on endpoint assets',
           'Tampering',
           severity,
           confidence,
           evidence,
-          ['Hunt the hash in EDR and file telemetry', 'Quarantine affected hosts and collect process ancestry'],
+          zh
+            ? ['在 EDR 和文件遥测中检索该哈希', '隔离受影响主机并收集进程链']
+            : ['Hunt the hash in EDR and file telemetry', 'Quarantine affected hosts and collect process ancestry'],
         ),
       );
       scenarios.push(
         this.scenario(
           'privilege-chain',
-          'Payload used to escalate privileges or stage follow-on tooling',
+          zh ? '载荷可能用于提权或投递后续工具' : 'Payload used to escalate privileges or stage follow-on tooling',
           'Elevation of Privilege',
           severity,
           confidence,
           evidence,
-          ['Review child processes, service creation, and credential access events', 'Rotate exposed credentials'],
+          zh
+            ? ['复核子进程、服务创建和凭据访问事件', '轮换可能暴露的凭据']
+            : ['Review child processes, service creation, and credential access events', 'Rotate exposed credentials'],
         ),
       );
     } else if (indicatorType === 'cve') {
       scenarios.push(
         this.scenario(
           'vulnerability-exploitation',
-          'Known vulnerability exploitation against exposed assets',
+          zh ? '针对暴露资产的已知漏洞利用' : 'Known vulnerability exploitation against exposed assets',
           'Elevation of Privilege',
           severity,
           confidence,
           evidence,
-          ['Map the CVE to exposed software inventory', 'Prioritize patching or compensating controls'],
+          zh
+            ? ['将 CVE 映射到暴露的软件资产清单', '优先安排补丁或补偿性控制']
+            : ['Map the CVE to exposed software inventory', 'Prioritize patching or compensating controls'],
         ),
       );
       scenarios.push(
         this.scenario(
           'data-impact',
-          'Exploitation may expose data or alter system state',
+          zh ? '漏洞利用可能导致数据泄露或系统状态被篡改' : 'Exploitation may expose data or alter system state',
           'Information Disclosure',
           severity,
           confidence,
           evidence,
-          ['Review exploitability, EPSS, and KEV status', 'Add monitoring for known exploitation patterns'],
+          zh
+            ? ['复核可利用性、EPSS 和 KEV 状态', '为已知利用模式增加监控']
+            : ['Review exploitability, EPSS, and KEV status', 'Add monitoring for known exploitation patterns'],
         ),
       );
     }
@@ -784,9 +809,13 @@ class ThreatStore {
       confidence,
       scenarios,
       nextSteps: [
-        `Run enrichment for ${indicatorType} ${indicator}`,
-        'Pivot on shared sources, tags, malware family, and first/last seen timestamps',
-        'Document impacted assets, trust boundaries, mitigations, and owner decisions',
+        zh ? `对 ${indicatorType} ${indicator} 执行情报富化` : `Run enrichment for ${indicatorType} ${indicator}`,
+        zh
+          ? '围绕共享来源、标签、恶意家族和首次/最近出现时间继续关联'
+          : 'Pivot on shared sources, tags, malware family, and first/last seen timestamps',
+        zh
+          ? '记录受影响资产、信任边界、缓解措施和责任人决策'
+          : 'Document impacted assets, trust boundaries, mitigations, and owner decisions',
       ],
     };
   }
@@ -815,7 +844,7 @@ class ThreatStore {
   investigateIndicator(
     indicator: string,
     requestedType?: IndicatorType,
-    opts: { recordHistory?: boolean } = {},
+    opts: { recordHistory?: boolean; language?: Language } = {},
   ): IocInvestigation {
     const value = indicator.trim();
     const indicatorType = requestedType ?? this.inferIndicatorType(value);
@@ -831,7 +860,7 @@ class ThreatStore {
       exactMatches,
       relatedIndicators: related,
       sourceSummary: this.sourceSummary(evidenceItems),
-      model: this.buildThreatModel(value, indicatorType, exactMatches, related),
+      model: this.buildThreatModel(value, indicatorType, exactMatches, related, opts.language ?? 'en'),
     };
     if (opts.recordHistory ?? true) this.rememberInvestigation(result);
     return result;

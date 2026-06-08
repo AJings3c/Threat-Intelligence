@@ -144,13 +144,17 @@ curl 'http://localhost:4000/api/investigate/report?indicator=example.com&type=do
 ```
 
 This IOC model is local evidence modeling. The **Architecture Threat Model** panel and
-`GET /api/threat-model` add a platform-level DFD-style view with assets, trust boundaries,
-data flows, assumptions, STRIDE scenarios, and report export:
+`GET /api/threat-model` add a platform-level DFD-style view with methodology, assets,
+trust boundaries, data flows, STRIDE matrix, DREAD scoring, attack paths, controls,
+assumptions, and report export:
 
 ```bash
 curl http://localhost:4000/api/threat-model
 curl 'http://localhost:4000/api/threat-model?format=markdown'
 ```
+
+See `docs/THREAT_MODEL.md` for the project-level threat model, STRIDE/DREAD rationale,
+control backlog, and review triggers.
 
 ## Configuration checks
 

@@ -26,6 +26,7 @@ import { investigationMarkdown, architectureThreatModelMarkdown } from './report
 import { buildArchitectureThreatModel } from './architectureThreatModel.js';
 import { apiAuth, audit, corsOptions, rateLimit } from './security.js';
 import type { EnrichmentProvider, IntegrationKind, ThreatSource } from './types.js';
+import { parseLanguage } from './language.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS ?? 15 * 60 * 1000);
@@ -235,11 +236,12 @@ api.get('/enrich', auth.requireRole('analyst'), audit('enrich'), (req, res) => {
 api.get('/investigate', auth.requireRole('analyst'), audit('investigate'), (req, res) => {
   const indicator = typeof req.query.indicator === 'string' ? req.query.indicator.trim() : '';
   const indicatorType = parseIndicatorType(typeof req.query.type === 'string' ? req.query.type : undefined);
+  const language = parseLanguage(req.query.lang);
   if (!indicator) {
     res.status(400).json({ error: 'missing indicator query parameter' });
     return;
   }
-  res.json(store.investigateIndicator(indicator, indicatorType ?? undefined));
+  res.json(store.investigateIndicator(indicator, indicatorType ?? undefined, { language }));
 });
 
 api.get('/investigations/history', auth.requireRole('analyst'), (_req, res) => {
@@ -254,17 +256,21 @@ api.get('/investigate/report', auth.requireRole('analyst'), audit('investigation
   const indicator = typeof req.query.indicator === 'string' ? req.query.indicator.trim() : '';
   const indicatorType = parseIndicatorType(typeof req.query.type === 'string' ? req.query.type : undefined);
   const format = typeof req.query.format === 'string' ? req.query.format : 'markdown';
+  const language = parseLanguage(req.query.lang);
   if (!indicator) {
     res.status(400).json({ error: 'missing indicator query parameter' });
     return;
   }
-  const result = store.investigateIndicator(indicator, indicatorType ?? undefined, { recordHistory: false });
+  const result = store.investigateIndicator(indicator, indicatorType ?? undefined, {
+    recordHistory: false,
+    language,
+  });
   if (format === 'json') {
-    res.json({ result, report: investigationMarkdown(result), generatedAt: new Date().toISOString() });
+    res.json({ result, report: investigationMarkdown(result, language), generatedAt: new Date().toISOString() });
     return;
   }
   res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-  res.send(investigationMarkdown(result));
+  res.send(investigationMarkdown(result, language));
 });
 
 api.get('/stats', (_req, res) => {
@@ -302,10 +308,28 @@ api.post('/config/test', auth.requireRole('admin'), audit('config_test'), (req, 
 });
 
 api.get('/threat-model', auth.requireRole('analyst'), audit('architecture_threat_model'), (req, res) => {
-  const model = buildArchitectureThreatModel(store.getStats(), store.getHealth());
+  const language = parseLanguage(req.query.lang);
+  const notifyStatus = notifier.status();
+  const configuredNotifyChannels = Object.entries(notifyStatus.channels)
+    .filter(([, configured]) => configured)
+    .map(([channel]) => channel);
+  const model = buildArchitectureThreatModel(store.getStats(), store.getHealth(), language, {
+    authConfigured: Boolean(
+      API_TOKEN ||
+        process.env.API_VIEWER_TOKENS?.trim() ||
+        process.env.API_ANALYST_TOKENS?.trim() ||
+        process.env.API_ADMIN_TOKENS?.trim(),
+    ),
+    persistenceEnabled: isPersistEnabled(),
+    notifyEnabled: notifyStatus.enabled,
+    configuredNotifyChannels,
+    corsRestricted: Boolean(process.env.CORS_ORIGINS?.trim()),
+    rateLimitMax: Number(process.env.API_RATE_LIMIT_MAX ?? 180),
+    jsonBodyLimit: process.env.JSON_BODY_LIMIT ?? '1mb',
+  });
   if (req.query.format === 'markdown') {
     res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-    res.send(architectureThreatModelMarkdown(model));
+    res.send(architectureThreatModelMarkdown(model, language));
     return;
   }
   res.json(model);

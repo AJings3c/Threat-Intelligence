@@ -33,6 +33,7 @@ export type SourceHealthStatus = 'healthy' | 'disabled' | 'warming' | 'error' | 
 export type EnrichmentProvider = 'virustotal' | 'shodan' | 'censys';
 export type IntegrationKind = 'source' | 'provider';
 export type IntegrationTestStatus = 'ok' | 'missing_config' | 'failed' | 'unsupported';
+export type Language = 'en' | 'zh';
 
 export interface ThreatIndicator {
   id: string;
@@ -243,6 +244,34 @@ export type StrideCategory =
   | 'Denial of Service'
   | 'Elevation of Privilege';
 
+export type ThreatModelLayer = 'system' | 'application' | 'service' | 'code';
+export type ThreatTreatmentStatus = 'implemented' | 'planned' | 'accepted' | 'transferred';
+
+export interface ThreatModelReference {
+  title: string;
+  url: string;
+}
+
+export interface ThreatModelMethodology {
+  framework: 'STRIDE';
+  scoring: 'DREAD';
+  process: string[];
+  reviewTriggers: string[];
+  references: ThreatModelReference[];
+}
+
+export interface DreadScore {
+  damage: number;
+  reproducibility: number;
+  exploitability: number;
+  affectedUsers: number;
+  discoverability: number;
+  total: number;
+  average: number;
+  risk: Severity;
+  rationale: string[];
+}
+
 export interface ThreatModelScenario {
   id: string;
   title: string;
@@ -251,6 +280,14 @@ export interface ThreatModelScenario {
   confidence: number;
   evidence: string[];
   recommendations: string[];
+  assetIds?: string[];
+  dataFlowIds?: string[];
+  threat?: string;
+  impact?: string;
+  dread?: DreadScore;
+  controls?: string[];
+  treatment?: ThreatTreatmentStatus;
+  verification?: string[];
 }
 
 export interface IocInvestigation {
@@ -287,6 +324,8 @@ export interface ThreatModelAsset {
   trustZone: string;
   criticality: Severity;
   data: string[];
+  owner?: string;
+  securityObjectives?: Array<'confidentiality' | 'integrity' | 'availability' | 'accountability'>;
 }
 
 export interface ThreatModelDataFlow {
@@ -297,6 +336,8 @@ export interface ThreatModelDataFlow {
   protocol: string;
   crossesTrustBoundary: boolean;
   data: string[];
+  trustBoundary?: string;
+  threatSurface?: string[];
 }
 
 export interface TrustBoundary {
@@ -306,13 +347,55 @@ export interface TrustBoundary {
   assets: string[];
 }
 
+export interface ThreatModelLayerView {
+  layer: ThreatModelLayer;
+  description: string;
+  assets: string[];
+  trustBoundaries: string[];
+  entryPoints: string[];
+}
+
+export interface ThreatModelMatrixRow {
+  elementId: string;
+  elementType: 'asset' | 'data_flow' | 'trust_boundary';
+  elementName: string;
+  stride: Partial<Record<StrideCategory, string[]>>;
+  priority: Severity;
+}
+
+export interface ThreatModelAttackPath {
+  id: string;
+  actor: string;
+  objective: string;
+  entryPoint: string;
+  path: string[];
+  impactedAssets: string[];
+  stride: StrideCategory[];
+  severity: Severity;
+  mitigations: string[];
+}
+
+export interface ThreatModelControl {
+  id: string;
+  name: string;
+  status: ThreatTreatmentStatus;
+  owner: string;
+  scenarios: string[];
+  verification: string[];
+}
+
 export interface ArchitectureThreatModel {
   scope: string;
   generatedAt: string;
+  methodology: ThreatModelMethodology;
+  layers: ThreatModelLayerView[];
   assets: ThreatModelAsset[];
   dataFlows: ThreatModelDataFlow[];
   trustBoundaries: TrustBoundary[];
+  threatMatrix: ThreatModelMatrixRow[];
   scenarios: ThreatModelScenario[];
+  attackPaths: ThreatModelAttackPath[];
+  controls: ThreatModelControl[];
   assumptions: string[];
   nextSteps: string[];
 }

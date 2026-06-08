@@ -18,6 +18,7 @@ import type {
   ThreatSource,
   InvestigationHistoryEntry,
   ArchitectureThreatModel,
+  Language,
 } from './types';
 
 const BASE = import.meta.env.VITE_API_BASE ?? '';
@@ -104,8 +105,12 @@ export function testIntegration(
   return postJson<IntegrationTestResult>('/api/config/test', { kind, id });
 }
 
-export function investigateIoc(indicator: string, type?: IndicatorType | ''): Promise<IocInvestigation> {
-  const params = new URLSearchParams({ indicator });
+export function investigateIoc(
+  indicator: string,
+  type?: IndicatorType | '',
+  lang: Language = 'en',
+): Promise<IocInvestigation> {
+  const params = new URLSearchParams({ indicator, lang });
   if (type) params.set('type', type);
   return getJson<IocInvestigation>(`/api/investigate?${params.toString()}`);
 }
@@ -121,8 +126,8 @@ export function fetchInvestigationHistory(limit = 20): Promise<{ enabled: boolea
   );
 }
 
-export function fetchArchitectureThreatModel(): Promise<ArchitectureThreatModel> {
-  return getJson<ArchitectureThreatModel>('/api/threat-model');
+export function fetchArchitectureThreatModel(lang: Language = 'en'): Promise<ArchitectureThreatModel> {
+  return getJson<ArchitectureThreatModel>(`/api/threat-model?lang=${lang}`);
 }
 
 export async function fetchText(path: string): Promise<string> {
@@ -131,11 +136,16 @@ export async function fetchText(path: string): Promise<string> {
   return await res.text();
 }
 
-export function investigationReport(indicator: string, type: IndicatorType, format: 'markdown' | 'json'): Promise<string> {
-  const params = new URLSearchParams({ indicator, type, format });
+export function investigationReport(
+  indicator: string,
+  type: IndicatorType,
+  format: 'markdown' | 'json',
+  lang: Language = 'en',
+): Promise<string> {
+  const params = new URLSearchParams({ indicator, type, format, lang });
   return fetchText(`/api/investigate/report?${params.toString()}`);
 }
 
-export function architectureReport(format: 'markdown' = 'markdown'): Promise<string> {
-  return fetchText(`/api/threat-model?format=${format}`);
+export function architectureReport(format: 'markdown' = 'markdown', lang: Language = 'en'): Promise<string> {
+  return fetchText(`/api/threat-model?format=${format}&lang=${lang}`);
 }
