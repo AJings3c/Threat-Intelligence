@@ -1,4 +1,12 @@
-import type { ConfigStatusResponse, NotifyTestResponse, SourceHealthStatus } from '../types';
+import type {
+  ConfigStatusResponse,
+  EnrichmentProvider,
+  IntegrationKind,
+  IntegrationTestResult,
+  NotifyTestResponse,
+  SourceHealthStatus,
+  ThreatSource,
+} from '../types';
 
 const STATUS_LABEL: Record<SourceHealthStatus, string> = {
   healthy: 'Healthy',
@@ -44,16 +52,22 @@ export function ConfigStatusPanel({
   checking,
   testResult,
   testLoading,
+  integrationResults,
+  integrationLoading,
   onRefresh,
   onSendTest,
+  onTestIntegration,
 }: {
   data: ConfigStatusResponse | null;
   loading: boolean;
   checking: boolean;
   testResult: NotifyTestResponse | null;
   testLoading: boolean;
+  integrationResults: Record<string, IntegrationTestResult>;
+  integrationLoading: string | null;
   onRefresh: () => void;
   onSendTest: () => void;
+  onTestIntegration: (kind: IntegrationKind, id: ThreatSource | EnrichmentProvider) => void;
 }) {
   const sources = data?.sources ?? [];
   const providers = data?.enrichmentProviders ?? [];
@@ -93,7 +107,7 @@ export function ConfigStatusPanel({
       <div className="grid gap-0 divide-y divide-white/5 lg:grid-cols-[1fr_320px] lg:divide-x lg:divide-y-0">
         <div className="max-h-[300px] overflow-auto">
           {sources.map((source) => (
-            <div key={source.source} className="grid gap-2 border-b border-white/5 px-4 py-3 last:border-b-0 md:grid-cols-[1fr_auto_auto] md:items-center">
+            <div key={source.source} className="grid gap-2 border-b border-white/5 px-4 py-3 last:border-b-0 md:grid-cols-[1fr_auto_auto_auto] md:items-center">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium text-slate-200">{source.label}</span>
@@ -108,9 +122,26 @@ export function ConfigStatusPanel({
                   {source.lastError ??
                     (source.requiredEnv.length > 0 ? source.requiredEnv.join(', ') : 'public feed')}
                 </div>
+                {integrationResults[`source:${source.source}`] && (
+                  <div className="mt-1 text-xs text-slate-400">
+                    Test: {integrationResults[`source:${source.source}`].status} ·{' '}
+                    {integrationResults[`source:${source.source}`].message}
+                    {integrationResults[`source:${source.source}`].latencyMs !== null
+                      ? ` · ${integrationResults[`source:${source.source}`].latencyMs}ms`
+                      : ''}
+                  </div>
+                )}
               </div>
               <div className="text-xs text-slate-400">{source.count.toLocaleString()} items</div>
               <div className="text-xs text-slate-500">{timeLabel(source.lastFetched)}</div>
+              <button
+                type="button"
+                onClick={() => onTestIntegration('source', source.source)}
+                disabled={integrationLoading === `source:${source.source}`}
+                className="rounded border border-white/10 bg-panel-2 px-2 py-1 text-[11px] font-semibold text-slate-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {integrationLoading === `source:${source.source}` ? 'Testing' : 'Test'}
+              </button>
             </div>
           ))}
         </div>
@@ -118,20 +149,41 @@ export function ConfigStatusPanel({
           <div className="text-xs font-semibold text-slate-300">Enrichment providers</div>
           <div className="mt-3 space-y-2">
             {providers.map((provider) => (
-              <div key={provider.provider} className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm capitalize text-slate-200">{provider.provider}</div>
-                  <div className="text-[11px] text-slate-500">{provider.requiredEnv.join(', ')}</div>
+              <div key={provider.provider} className="grid gap-2 border-b border-white/5 pb-2 last:border-b-0">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm capitalize text-slate-200">{provider.provider}</div>
+                    <div className="text-[11px] text-slate-500">{provider.requiredEnv.join(', ')}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${
+                        provider.configured
+                          ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
+                          : 'border-slate-500/30 bg-slate-500/10 text-slate-400'
+                      }`}
+                    >
+                      {provider.configured ? 'Configured' : 'Missing'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onTestIntegration('provider', provider.provider)}
+                      disabled={integrationLoading === `provider:${provider.provider}`}
+                      className="rounded border border-white/10 bg-panel-2 px-2 py-1 text-[11px] font-semibold text-slate-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {integrationLoading === `provider:${provider.provider}` ? 'Testing' : 'Test'}
+                    </button>
+                  </div>
                 </div>
-                <span
-                  className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${
-                    provider.configured
-                      ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
-                      : 'border-slate-500/30 bg-slate-500/10 text-slate-400'
-                  }`}
-                >
-                  {provider.configured ? 'Configured' : 'Missing'}
-                </span>
+                {integrationResults[`provider:${provider.provider}`] && (
+                  <div className="text-xs text-slate-400">
+                    Test: {integrationResults[`provider:${provider.provider}`].status} ·{' '}
+                    {integrationResults[`provider:${provider.provider}`].message}
+                    {integrationResults[`provider:${provider.provider}`].latencyMs !== null
+                      ? ` · ${integrationResults[`provider:${provider.provider}`].latencyMs}ms`
+                      : ''}
+                  </div>
+                )}
               </div>
             ))}
           </div>

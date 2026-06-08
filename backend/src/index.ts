@@ -8,6 +8,7 @@ import { store } from './store.js';
 import { notifier } from './notify/index.js';
 import { errorMessage, extractToken } from './util.js';
 import { initPersistence, getTrend, isPersistEnabled, getSourceHealthHistory } from './persist.js';
+import { getAuditEvents } from './persist.js';
 import { buildStixBundle } from './stix.js';
 import {
   buildTaxiiApiRoot,
@@ -20,9 +21,32 @@ import {
   taxiiCollection,
 } from './taxii.js';
 import { enrichIndicator, enrichmentConfigStatus, parseIndicatorType } from './enrich.js';
+import { testIntegration } from './integrationTests.js';
+import { investigationMarkdown, architectureThreatModelMarkdown } from './reports.js';
+import { buildArchitectureThreatModel } from './architectureThreatModel.js';
+import { apiAuth, audit, corsOptions, rateLimit } from './security.js';
+import type { EnrichmentProvider, IntegrationKind, ThreatSource } from './types.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS ?? 15 * 60 * 1000);
+const THREAT_SOURCES: ThreatSource[] = [
+  'cisa_kev',
+  'feodo',
+  'urlhaus',
+  'nvd',
+  'x',
+  'facebook',
+  'openphish',
+  'threatfox',
+  'malwarebazaar',
+  'spamhaus_drop',
+  'dshield',
+  'phishtank',
+  'abuseipdb',
+  'otx',
+  'taxii_import',
+];
+const ENRICHMENT_PROVIDERS: EnrichmentProvider[] = ['virustotal', 'shodan', 'censys'];
 
 // Optional API auth. When API_TOKEN is set, all /api routes (except /health) require it.
 // A static token suits machine/SIEM access or a private deployment; a browser SPA cannot
@@ -36,7 +60,7 @@ const tokenOf = (req: express.Request): string =>
   );
 
 const app = express();
-app.use(cors());
+app.use(cors(corsOptions()));
 
 function taxiiBaseUrl(req: express.Request): string {
   return `${req.protocol}://${req.get('host') ?? `localhost:${PORT}`}`;
@@ -59,6 +83,15 @@ function guardTaxii(req: express.Request, res: express.Response): boolean {
 
 function stixObjects() {
   return buildStixBundle(store.getIndicators(), store.getAllCves()).objects;
+}
+
+function taxiiPageOptions(req: express.Request) {
+  const limit = req.query.limit ? Number(req.query.limit) : undefined;
+  return {
+    addedAfter: typeof req.query.added_after === 'string' ? req.query.added_after : undefined,
+    limit: Number.isFinite(limit) ? limit : undefined,
+    next: typeof req.query.next === 'string' ? req.query.next : undefined,
+  };
 }
 
 // Server-Sent Events stream for live updates. Registered BEFORE compression so the
@@ -94,7 +127,7 @@ app.get('/api/stream', (req, res) => {
 });
 
 app.use(compression());
-app.use(express.json());
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? '1mb' }));
 
 app.get(['/taxii2', '/taxii2/'], (req, res) => {
   if (!guardTaxii(req, res)) return;
@@ -131,7 +164,7 @@ app.get('/taxii2/root/collections/:id/objects/', (req, res) => {
     res.status(404).json({ title: 'Not found', description: 'collection not found' });
     return;
   }
-  res.json(buildTaxiiEnvelope(stixObjects()));
+  res.json(buildTaxiiEnvelope(stixObjects(), taxiiPageOptions(req)));
 });
 
 app.get('/taxii2/root/collections/:id/manifest/', (req, res) => {
@@ -141,25 +174,16 @@ app.get('/taxii2/root/collections/:id/manifest/', (req, res) => {
     res.status(404).json({ title: 'Not found', description: 'collection not found' });
     return;
   }
-  res.json(buildTaxiiManifest(stixObjects()));
+  res.json(buildTaxiiManifest(stixObjects(), taxiiPageOptions(req)));
 });
 
 const api = express.Router();
+const auth = apiAuth(API_TOKEN);
+api.use(auth.attachRole);
+api.use(rateLimit());
 
 // Gate every /api route behind the token when configured; /health stays open for probes.
-if (API_TOKEN) {
-  api.use((req, res, next) => {
-    if (req.path === '/health') {
-      next();
-      return;
-    }
-    if (tokenOf(req) === API_TOKEN) {
-      next();
-      return;
-    }
-    res.status(401).json({ error: 'unauthorized: invalid or missing API token' });
-  });
-}
+api.use(auth.requireToken);
 
 api.get('/health', (_req, res) => {
   res.json({
@@ -196,7 +220,7 @@ api.get('/hashes', (req, res) => {
   res.json({ ...store.getHashIntel(Number.isFinite(limit) ? limit : 50) });
 });
 
-api.get('/enrich', (req, res) => {
+api.get('/enrich', auth.requireRole('analyst'), audit('enrich'), (req, res) => {
   const indicator = typeof req.query.indicator === 'string' ? req.query.indicator.trim() : '';
   const indicatorType = parseIndicatorType(typeof req.query.type === 'string' ? req.query.type : undefined);
   if (!indicator || !indicatorType) {
@@ -208,7 +232,7 @@ api.get('/enrich', (req, res) => {
     .catch((err) => res.status(500).json({ error: errorMessage(err) }));
 });
 
-api.get('/investigate', (req, res) => {
+api.get('/investigate', auth.requireRole('analyst'), audit('investigate'), (req, res) => {
   const indicator = typeof req.query.indicator === 'string' ? req.query.indicator.trim() : '';
   const indicatorType = parseIndicatorType(typeof req.query.type === 'string' ? req.query.type : undefined);
   if (!indicator) {
@@ -216,6 +240,31 @@ api.get('/investigate', (req, res) => {
     return;
   }
   res.json(store.investigateIndicator(indicator, indicatorType ?? undefined));
+});
+
+api.get('/investigations/history', auth.requireRole('analyst'), (_req, res) => {
+  const limit = _req.query.limit ? Number(_req.query.limit) : 50;
+  res.json({
+    enabled: true,
+    points: store.getInvestigationHistory(Number.isFinite(limit) ? limit : 50),
+  });
+});
+
+api.get('/investigate/report', auth.requireRole('analyst'), audit('investigation_report'), (req, res) => {
+  const indicator = typeof req.query.indicator === 'string' ? req.query.indicator.trim() : '';
+  const indicatorType = parseIndicatorType(typeof req.query.type === 'string' ? req.query.type : undefined);
+  const format = typeof req.query.format === 'string' ? req.query.format : 'markdown';
+  if (!indicator) {
+    res.status(400).json({ error: 'missing indicator query parameter' });
+    return;
+  }
+  const result = store.investigateIndicator(indicator, indicatorType ?? undefined, { recordHistory: false });
+  if (format === 'json') {
+    res.json({ result, report: investigationMarkdown(result), generatedAt: new Date().toISOString() });
+    return;
+  }
+  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  res.send(investigationMarkdown(result));
 });
 
 api.get('/stats', (_req, res) => {
@@ -233,6 +282,33 @@ api.get('/config/status', (_req, res) => {
     notify: notifier.status(),
     persistence: { enabled: isPersistEnabled() },
   });
+});
+
+api.post('/config/test', auth.requireRole('admin'), audit('config_test'), (req, res) => {
+  const kind = req.body?.kind as IntegrationKind | undefined;
+  const id = req.body?.id as ThreatSource | EnrichmentProvider | undefined;
+  if (
+    (kind !== 'source' && kind !== 'provider') ||
+    !id ||
+    (kind === 'source' && !THREAT_SOURCES.includes(id as ThreatSource)) ||
+    (kind === 'provider' && !ENRICHMENT_PROVIDERS.includes(id as EnrichmentProvider))
+  ) {
+    res.status(400).json({ error: 'missing or invalid kind/id' });
+    return;
+  }
+  testIntegration(kind, id)
+    .then((result) => res.json(result))
+    .catch((err) => res.status(500).json({ error: errorMessage(err) }));
+});
+
+api.get('/threat-model', auth.requireRole('analyst'), audit('architecture_threat_model'), (req, res) => {
+  const model = buildArchitectureThreatModel(store.getStats(), store.getHealth());
+  if (req.query.format === 'markdown') {
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    res.send(architectureThreatModelMarkdown(model));
+    return;
+  }
+  res.json(model);
 });
 
 // Historical source-health samples (requires persistence; empty when disabled).
@@ -255,6 +331,11 @@ api.get('/notify/status', (_req, res) => {
   res.json(notifier.status());
 });
 
+api.get('/audit', auth.requireRole('admin'), (_req, res) => {
+  const limit = _req.query.limit ? Number(_req.query.limit) : 100;
+  res.json({ enabled: isPersistEnabled(), events: getAuditEvents(Number.isFinite(limit) ? limit : 100) });
+});
+
 // STIX 2.1 bundle export for sharing with MISP / OpenCTI / SIEMs.
 api.get('/export/stix', (_req, res) => {
   const bundle = buildStixBundle(store.getIndicators(), store.getAllCves());
@@ -269,7 +350,7 @@ api.get('/export/stix', (_req, res) => {
 const NOTIFY_TEST_TOKEN = process.env.NOTIFY_TEST_TOKEN?.trim() || null;
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
-api.post('/notify/test', (req, res) => {
+api.post('/notify/test', auth.requireRole('admin'), audit('notify_test'), (req, res) => {
   if (NOTIFY_TEST_TOKEN) {
     const provided =
       (typeof req.headers['x-notify-token'] === 'string' ? req.headers['x-notify-token'] : '') ||

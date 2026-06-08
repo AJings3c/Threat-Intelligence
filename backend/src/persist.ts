@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { errorMessage } from './util.js';
+import type { AuditEvent, InvestigationHistoryEntry } from './types.js';
 
 // Lightweight, OPT-IN persistence layer backed by Node's built-in SQLite (node:sqlite,
 // Node >= 22). It is enabled only when DATA_DIR is set; otherwise everything is a no-op
@@ -102,12 +103,120 @@ export function initPersistence(): void {
       );
       CREATE INDEX IF NOT EXISTS idx_source_health_history_source_ts
         ON source_health_history(source, ts);
+      CREATE TABLE IF NOT EXISTS investigation_history (
+        id TEXT PRIMARY KEY,
+        ts INTEGER NOT NULL,
+        indicator TEXT NOT NULL,
+        indicator_type TEXT NOT NULL,
+        posture TEXT NOT NULL,
+        exact_count INTEGER NOT NULL,
+        related_count INTEGER NOT NULL,
+        highest_severity TEXT NOT NULL DEFAULT '',
+        confidence INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_investigation_history_ts
+        ON investigation_history(ts);
+      CREATE TABLE IF NOT EXISTS audit_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL,
+        role TEXT NOT NULL,
+        action TEXT NOT NULL,
+        path TEXT NOT NULL,
+        ok INTEGER NOT NULL,
+        detail TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX IF NOT EXISTS idx_audit_events_ts
+        ON audit_events(ts);
     `);
     console.log(`[persist] SQLite persistence enabled at ${dir}`);
   } catch (err) {
     db = null;
     console.warn(`[persist] disabled (in-memory only): ${errorMessage(err)}`);
   }
+}
+
+export function recordInvestigationHistory(entry: InvestigationHistoryEntry): void {
+  if (!db) return;
+  db.prepare(
+    'INSERT OR REPLACE INTO investigation_history ' +
+      '(id, ts, indicator, indicator_type, posture, exact_count, related_count, highest_severity, confidence) ' +
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  ).run(
+    entry.id,
+    entry.ts,
+    entry.indicator,
+    entry.indicatorType,
+    entry.posture,
+    entry.exactCount,
+    entry.relatedCount,
+    entry.highestSeverity ?? '',
+    entry.confidence,
+  );
+}
+
+export function getInvestigationHistory(limit = 50): InvestigationHistoryEntry[] {
+  if (!db) return [];
+  const rows = db
+    .prepare(
+      'SELECT id, ts, indicator, indicator_type, posture, exact_count, related_count, highest_severity, confidence ' +
+        'FROM investigation_history ORDER BY ts DESC LIMIT ?',
+    )
+    .all(Math.min(Math.max(1, Math.floor(limit)), 200)) as Array<{
+      id: string;
+      ts: number;
+      indicator: string;
+      indicator_type: InvestigationHistoryEntry['indicatorType'];
+      posture: InvestigationHistoryEntry['posture'];
+      exact_count: number;
+      related_count: number;
+      highest_severity: InvestigationHistoryEntry['highestSeverity'] | '';
+      confidence: number;
+    }>;
+  return rows.map((row) => ({
+    id: row.id,
+    ts: row.ts,
+    indicator: row.indicator,
+    indicatorType: row.indicator_type,
+    posture: row.posture,
+    exactCount: row.exact_count,
+    relatedCount: row.related_count,
+    highestSeverity: row.highest_severity || null,
+    confidence: row.confidence,
+  }));
+}
+
+export function recordAuditEvent(event: AuditEvent): void {
+  if (!db) return;
+  db.prepare('INSERT INTO audit_events (ts, role, action, path, ok, detail) VALUES (?, ?, ?, ?, ?, ?)').run(
+    event.ts,
+    event.role,
+    event.action,
+    event.path,
+    event.ok ? 1 : 0,
+    event.detail,
+  );
+}
+
+export function getAuditEvents(limit = 100): AuditEvent[] {
+  if (!db) return [];
+  const rows = db
+    .prepare('SELECT ts, role, action, path, ok, detail FROM audit_events ORDER BY ts DESC LIMIT ?')
+    .all(Math.min(Math.max(1, Math.floor(limit)), 500)) as Array<{
+      ts: string;
+      role: AuditEvent['role'];
+      action: string;
+      path: string;
+      ok: number;
+      detail: string;
+    }>;
+  return rows.map((row) => ({
+    ts: row.ts,
+    role: row.role,
+    action: row.action,
+    path: row.path,
+    ok: row.ok === 1,
+    detail: row.detail,
+  }));
 }
 
 // Test helper: close and reset the handle.

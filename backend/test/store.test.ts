@@ -347,6 +347,14 @@ describe('ThreatStore IOC investigation', () => {
     expect(result.relatedIndicators.some((item) => item.id === 'hash-related')).toBe(true);
     expect(result.model.posture).toBe('matched');
     expect(result.model.scenarios.some((scenario) => scenario.stride === 'Tampering')).toBe(true);
+
+    const history = store.getInvestigationHistory();
+    expect(history[0]).toMatchObject({
+      indicator: 'c'.repeat(64),
+      indicatorType: 'hash',
+      posture: 'matched',
+      exactCount: 1,
+    });
   });
 
   it('relates domains to URL hosts when no exact indicator exists', async () => {

@@ -44,4 +44,25 @@ describe('TAXII helpers', () => {
       version: object.modified,
     });
   });
+
+  it('paginates and filters by added_after', () => {
+    const older = { ...object, id: 'indicator--22222222-2222-4222-8222-222222222222' };
+    const newer = {
+      ...object,
+      id: 'indicator--33333333-3333-4333-8333-333333333333',
+      created: '2026-06-09T00:00:00.000Z',
+      modified: '2026-06-09T00:00:00.000Z',
+    };
+
+    expect(buildTaxiiEnvelope([older, newer], { limit: 1 })).toMatchObject({
+      more: true,
+      next: '1',
+      objects: [older],
+    });
+    expect(buildTaxiiEnvelope([older, newer], { next: '1', limit: 1 })).toMatchObject({
+      more: false,
+      objects: [newer],
+    });
+    expect(buildTaxiiManifest([older, newer], { addedAfter: '2026-06-08T12:00:00.000Z' }).objects).toHaveLength(1);
+  });
 });

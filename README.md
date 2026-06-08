@@ -8,6 +8,8 @@ dashboard: a world threat map, a live indicator feed, a latest-CVE panel, severi
 filtering/search, IOC investigation, STRIDE-style threat modeling, and per-source
 freshness/health monitoring. It can also push scheduled alert digests of new
 high-severity threats to **DingTalk**, **Telegram**, **Slack**, or a generic webhook.
+Analysts can test configured integrations, enrich an IOC on demand, export investigation
+reports, review investigation history, and generate an architecture-level STRIDE model.
 
 ## Data sources (all public, no API key required)
 
@@ -70,10 +72,15 @@ UI stays fast and the upstream feeds are not hammered.
 | `GET /api/hashes` | Hash IOCs and malware-family aggregations |
 | `GET /api/enrich` | On-demand enrichment, query `indicator` + `type` |
 | `GET /api/investigate` | Local IOC investigation + STRIDE-style threat model, query `indicator` and optional `type` |
+| `GET /api/investigate/report` | IOC threat-model report as Markdown or JSON |
+| `GET /api/investigations/history` | Recent IOC investigations |
+| `GET /api/threat-model` | Architecture-level assets, data flows, trust boundaries, and STRIDE scenarios |
 | `GET /api/stats` | Aggregate counts (by source/type/severity, top countries) |
 | `GET /api/sources/health` | Per-source freshness and error state |
 | `GET /api/sources/history` | Historical source health samples (requires `DATA_DIR`) |
 | `GET /api/config/status` | Non-secret integration configuration status |
+| `POST /api/config/test` | Test one source or enrichment provider connection |
+| `GET /api/audit` | Recent audit events (requires `DATA_DIR`) |
 | `GET /api/notify/status` | Alert notifier config + last-run state |
 | `POST /api/notify/test` | Send a test digest to configured channels now |
 | `GET /taxii2/` | TAXII 2.1 discovery document |
@@ -105,7 +112,8 @@ both the API and the dashboard.
 The platform exposes a STIX bundle at `/api/export/stix` and a read-only TAXII 2.1 API root
 under `/taxii2/root/`. The TAXII collection id is stable and advertised by
 `GET /taxii2/root/collections/`. When `API_TOKEN` is configured, TAXII endpoints accept the
-same bearer/header/query token options as the REST API.
+same bearer/header/query token options as the REST API. TAXII objects and manifest endpoints
+support `limit`, `next`, and `added_after` for pagination and incremental pulls.
 
 ## Scripts
 
@@ -126,8 +134,23 @@ curl 'http://localhost:4000/api/investigate?indicator=example.com'
 ```
 
 The response contains exact local matches, related indicators, source summary, confidence,
-highest severity, and STRIDE-style scenarios with evidence and mitigation steps. This is
-local evidence modeling, not a replacement for a full architecture data-flow diagram review.
+highest severity, and STRIDE-style scenarios with evidence and mitigation steps. The dashboard
+can then call configured enrichers, show recent searches, and export Markdown/JSON reports:
+
+```bash
+curl 'http://localhost:4000/api/enrich?indicator=example.com&type=domain'
+curl 'http://localhost:4000/api/investigations/history?limit=20'
+curl 'http://localhost:4000/api/investigate/report?indicator=example.com&type=domain&format=markdown'
+```
+
+This IOC model is local evidence modeling. The **Architecture Threat Model** panel and
+`GET /api/threat-model` add a platform-level DFD-style view with assets, trust boundaries,
+data flows, assumptions, STRIDE scenarios, and report export:
+
+```bash
+curl http://localhost:4000/api/threat-model
+curl 'http://localhost:4000/api/threat-model?format=markdown'
+```
 
 ## Configuration checks
 
@@ -135,11 +158,26 @@ Use the dashboard's **Configuration Check** panel or call:
 
 ```bash
 curl http://localhost:4000/api/config/status
+curl -X POST http://localhost:4000/api/config/test \
+  -H 'Content-Type: application/json' \
+  -d '{"kind":"provider","id":"virustotal"}'
 curl -X POST http://localhost:4000/api/notify/test
 ```
 
 `/api/config/status` never returns secret values. Credentialed sources show as `disabled`
-until the required environment variables are present.
+until the required environment variables are present. Connection tests are operator-triggered
+because they may contact upstream providers and consume quota.
+
+## API security
+
+When `API_TOKEN` is set, it acts as an admin token. You can also set comma-separated
+`API_VIEWER_TOKENS`, `API_ANALYST_TOKENS`, and `API_ADMIN_TOKENS` for role-scoped access.
+Analyst routes include investigation, enrichment, reports, and architecture modeling.
+Admin routes include integration tests, notify tests, and audit log access.
+
+Set `CORS_ORIGINS` to a comma-separated allow-list for browser deployments. `API_RATE_LIMIT_*`
+limits API calls per client/role bucket, and `JSON_BODY_LIMIT` bounds request bodies. When
+`DATA_DIR` is enabled, audit events and investigation history are stored in SQLite.
 
 ## Alerting (DingTalk / Telegram / Slack / Webhook scheduled push)
 
@@ -185,7 +223,13 @@ See `.env.example` for the full list of variables.
 | `REFRESH_INTERVAL_MS` | `900000` | Feed refresh interval (15 min) |
 | `REFRESH_<SOURCE>_INTERVAL_MS` | source default | Optional per-source minimum refresh interval, e.g. `REFRESH_NVD_INTERVAL_MS` |
 | `VITE_API_BASE` | `''` | Frontend API base (leave empty to use same-origin / dev proxy) |
-| `DATA_DIR` | — | Enables SQLite persistence for geo cache, first/last-seen, trends, push events |
+| `DATA_DIR` | — | Enables SQLite persistence for geo cache, first/last-seen, trends, push events, audit, and investigation history |
+| `API_TOKEN` | — | Admin API token for REST and TAXII access |
+| `API_VIEWER_TOKENS` / `API_ANALYST_TOKENS` / `API_ADMIN_TOKENS` | — | Optional role-scoped API tokens |
+| `CORS_ORIGINS` | — | Comma-separated browser origin allow-list |
+| `API_RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window |
+| `API_RATE_LIMIT_MAX` | `180` | Max API calls per window per client/role bucket |
+| `JSON_BODY_LIMIT` | `1mb` | Express JSON request body limit |
 | `NVD_API_KEY` | — | Optional NVD API key, increases NVD rate limits |
 | `PHISHTANK_APP_KEY` | — | Optional PhishTank app key; enables PhishTank feed collection |
 | `ABUSEIPDB_API_KEY` | — | Optional AbuseIPDB API key; enables high-confidence IP blacklist collection |
@@ -196,6 +240,9 @@ See `.env.example` for the full list of variables.
 | `TAXII_IMPORT_OBJECTS_URL` | — | Optional external TAXII collection objects URL to import |
 | `TAXII_IMPORT_BEARER_TOKEN` | — | Optional bearer token for external TAXII import |
 | `TAXII_IMPORT_USERNAME` / `TAXII_IMPORT_PASSWORD` | — | Optional basic auth for external TAXII import |
+| `TAXII_IMPORT_ADDED_AFTER` | — | Optional TAXII incremental import lower bound |
+| `TAXII_IMPORT_PAGE_LIMIT` | `500` | Objects requested per TAXII import page |
+| `TAXII_IMPORT_MAX_PAGES` | `5` | Max TAXII import pages per refresh |
 | `VIRUSTOTAL_API_KEY` | — | Optional VirusTotal API key for `/api/enrich` |
 | `SHODAN_API_KEY` | — | Optional Shodan API key for IP enrichment |
 | `CENSYS_API_ID` / `CENSYS_API_SECRET` | — | Optional Censys Search credentials for IP enrichment |

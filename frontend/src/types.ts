@@ -30,6 +30,9 @@ export type Severity = 'low' | 'medium' | 'high' | 'critical';
 export type Tlp = 'clear' | 'green' | 'amber' | 'red';
 export type SourceReliability = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 export type SourceHealthStatus = 'healthy' | 'disabled' | 'warming' | 'error' | 'stale' | 'deprecated';
+export type EnrichmentProvider = 'virustotal' | 'shodan' | 'censys';
+export type IntegrationKind = 'source' | 'provider';
+export type IntegrationTestStatus = 'ok' | 'missing_config' | 'failed' | 'unsupported';
 
 export interface ThreatIndicator {
   id: string;
@@ -175,9 +178,36 @@ export interface SourceConfigStatus {
 }
 
 export interface ProviderConfigStatus {
-  provider: 'virustotal' | 'shodan' | 'censys';
+  provider: EnrichmentProvider;
   configured: boolean;
   requiredEnv: string[];
+}
+
+export interface EnrichmentResult {
+  provider: EnrichmentProvider;
+  ok: boolean;
+  error: string | null;
+  summary: Record<string, unknown> | null;
+  reference?: string;
+}
+
+export interface EnrichmentResponse {
+  indicator: string;
+  indicatorType: IndicatorType;
+  results: EnrichmentResult[];
+}
+
+export interface IntegrationTestResult {
+  kind: IntegrationKind;
+  id: ThreatSource | EnrichmentProvider;
+  label: string;
+  status: IntegrationTestStatus;
+  configured: boolean;
+  requiredEnv: string[];
+  testedAt: string;
+  latencyMs: number | null;
+  message: string;
+  sampleCount?: number;
 }
 
 export interface NotifyStatus {
@@ -236,4 +266,53 @@ export interface IocInvestigation {
     scenarios: ThreatModelScenario[];
     nextSteps: string[];
   };
+}
+
+export interface InvestigationHistoryEntry {
+  id: string;
+  ts: number;
+  indicator: string;
+  indicatorType: IndicatorType;
+  posture: IocInvestigation['model']['posture'];
+  exactCount: number;
+  relatedCount: number;
+  highestSeverity: Severity | null;
+  confidence: number;
+}
+
+export interface ThreatModelAsset {
+  id: string;
+  name: string;
+  kind: 'user' | 'service' | 'data_store' | 'external_source' | 'secret' | 'integration';
+  trustZone: string;
+  criticality: Severity;
+  data: string[];
+}
+
+export interface ThreatModelDataFlow {
+  id: string;
+  from: string;
+  to: string;
+  name: string;
+  protocol: string;
+  crossesTrustBoundary: boolean;
+  data: string[];
+}
+
+export interface TrustBoundary {
+  id: string;
+  name: string;
+  description: string;
+  assets: string[];
+}
+
+export interface ArchitectureThreatModel {
+  scope: string;
+  generatedAt: string;
+  assets: ThreatModelAsset[];
+  dataFlows: ThreatModelDataFlow[];
+  trustBoundaries: TrustBoundary[];
+  scenarios: ThreatModelScenario[];
+  assumptions: string[];
+  nextSteps: string[];
 }

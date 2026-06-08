@@ -1,7 +1,18 @@
-import { useState } from 'react';
-import { investigateIoc } from '../api';
+import { useEffect, useState } from 'react';
+import {
+  enrichIoc,
+  fetchInvestigationHistory,
+  investigateIoc,
+  investigationReport,
+} from '../api';
 import { SOURCE_LABELS, TYPE_LABELS } from '../constants';
-import type { IndicatorType, IocInvestigation, ThreatIndicator } from '../types';
+import type {
+  EnrichmentResponse,
+  IndicatorType,
+  InvestigationHistoryEntry,
+  IocInvestigation,
+  ThreatIndicator,
+} from '../types';
 import { SeverityBadge } from './SeverityBadge';
 
 const INDICATOR_TYPES: Array<IndicatorType | ''> = ['', 'ip', 'domain', 'url', 'hash', 'cidr', 'cve'];
@@ -28,24 +39,87 @@ function SourceLine({ item }: { item: ThreatIndicator }) {
   );
 }
 
+function downloadText(filename: string, text: string, mime = 'text/plain'): void {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function shortTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString();
+}
+
 export function IocInvestigationPanel() {
   const [indicator, setIndicator] = useState('');
   const [type, setType] = useState<IndicatorType | ''>('');
   const [loading, setLoading] = useState(false);
+  const [enrichLoading, setEnrichLoading] = useState(false);
+  const [exportLoading, setExportLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<IocInvestigation | null>(null);
+  const [enrichment, setEnrichment] = useState<EnrichmentResponse | null>(null);
+  const [history, setHistory] = useState<InvestigationHistoryEntry[]>([]);
+
+  const loadHistory = async () => {
+    try {
+      const res = await fetchInvestigationHistory(12);
+      setHistory(res.points);
+    } catch {
+      // History is helpful but non-fatal.
+    }
+  };
+
+  useEffect(() => {
+    void loadHistory();
+  }, []);
 
   const run = async () => {
     const value = indicator.trim();
     if (!value) return;
     setLoading(true);
     setError(null);
+    setEnrichment(null);
     try {
       setResult(await investigateIoc(value, type));
+      void loadHistory();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Investigation failed');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const runEnrichment = async () => {
+    if (!result) return;
+    setEnrichLoading(true);
+    setError(null);
+    try {
+      setEnrichment(await enrichIoc(result.indicator, result.indicatorType));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Enrichment failed');
+    } finally {
+      setEnrichLoading(false);
+    }
+  };
+
+  const exportReport = async (format: 'markdown' | 'json') => {
+    if (!result) return;
+    setExportLoading(format);
+    try {
+      const text = await investigationReport(result.indicator, result.indicatorType, format);
+      downloadText(
+        `ioc-threat-model-${result.indicatorType}-${Date.now()}.${format === 'json' ? 'json' : 'md'}`,
+        format === 'json' ? JSON.stringify(JSON.parse(text), null, 2) : text,
+        format === 'json' ? 'application/json' : 'text/markdown',
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Report export failed');
+    } finally {
+      setExportLoading(null);
     }
   };
 
@@ -102,6 +176,32 @@ export function IocInvestigationPanel() {
                 {result.model.highestSeverity && <SeverityBadge severity={result.model.highestSeverity} />}
                 <span className="text-xs text-slate-500">C{result.model.confidence || '-'}</span>
               </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void runEnrichment()}
+                  disabled={enrichLoading}
+                  className="rounded border border-sky-400/40 bg-sky-400/10 px-2 py-1 text-[11px] font-semibold text-sky-200 hover:bg-sky-400/15 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {enrichLoading ? 'Enriching' : 'Run enrichment'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void exportReport('markdown')}
+                  disabled={exportLoading !== null}
+                  className="rounded border border-white/10 bg-panel-2 px-2 py-1 text-[11px] font-semibold text-slate-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {exportLoading === 'markdown' ? 'Exporting' : 'Export Markdown'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void exportReport('json')}
+                  disabled={exportLoading !== null}
+                  className="rounded border border-white/10 bg-panel-2 px-2 py-1 text-[11px] font-semibold text-slate-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {exportLoading === 'json' ? 'Exporting' : 'Export JSON'}
+                </button>
+              </div>
             </div>
             <div className="max-h-[360px] overflow-auto">
               <div className="px-4 py-2 text-xs font-semibold text-slate-300">
@@ -117,9 +217,55 @@ export function IocInvestigationPanel() {
               {exact.length === 0 && related.length === 0 && (
                 <div className="px-4 py-8 text-center text-sm text-slate-400">No local evidence.</div>
               )}
+              {history.length > 0 && (
+                <div className="border-t border-white/5 px-4 py-3">
+                  <div className="text-xs font-semibold text-slate-300">Recent investigations</div>
+                  <div className="mt-2 space-y-2">
+                    {history.slice(0, 6).map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          setIndicator(item.indicator);
+                          setType(item.indicatorType);
+                        }}
+                        className="block w-full rounded border border-white/10 bg-panel-2 px-2 py-1 text-left text-xs text-slate-400 hover:bg-white/5"
+                      >
+                        <span className="font-mono text-sky-300">{compact(item.indicator)}</span>
+                        <span className="ml-2">{item.posture.replace('_', ' ')}</span>
+                        <span className="ml-2 text-slate-500">{shortTime(item.ts)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           <div className="max-h-[420px] overflow-auto">
+            {enrichment && (
+              <div className="border-b border-white/5 px-4 py-3">
+                <div className="text-xs font-semibold text-slate-400">Enrichment</div>
+                <div className="mt-2 grid gap-2 md:grid-cols-3">
+                  {enrichment.results.length > 0 ? (
+                    enrichment.results.map((item) => (
+                      <div key={item.provider} className="rounded border border-white/10 bg-panel-2 p-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold capitalize text-slate-200">{item.provider}</span>
+                          <span className={item.ok ? 'text-xs text-emerald-300' : 'text-xs text-red-300'}>
+                            {item.ok ? 'ok' : 'failed'}
+                          </span>
+                        </div>
+                        <div className="mt-1 max-h-16 overflow-hidden break-all text-[11px] text-slate-500">
+                          {item.ok ? JSON.stringify(item.summary) : item.error}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-xs text-slate-500">No enrichment providers configured for this IOC type.</div>
+                  )}
+                </div>
+              </div>
+            )}
             {result.model.scenarios.map((scenario) => (
               <div key={scenario.id} className="border-b border-white/5 px-4 py-3 last:border-b-0">
                 <div className="flex flex-wrap items-center gap-2">

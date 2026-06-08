@@ -13,7 +13,9 @@ import type {
   StrideCategory,
   ThreatModelScenario,
   SourceHealthStatus,
+  InvestigationHistoryEntry,
 } from './types.js';
+import crypto from 'node:crypto';
 import { fetchCisaKev } from './sources/cisaKev.js';
 import { fetchFeodo } from './sources/feodo.js';
 import { fetchUrlhaus } from './sources/urlhaus.js';
@@ -31,7 +33,14 @@ import { fetchOtx } from './sources/otx.js';
 import { fetchTaxiiImport } from './sources/taxiiImport.js';
 import { geolocate, isIpv4 } from './geo.js';
 import { dedupeIndicators } from './correlate.js';
-import { recordSeen, recordSnapshot, recordSourceHealthHistory } from './persist.js';
+import {
+  getInvestigationHistory as getPersistedInvestigationHistory,
+  isPersistEnabled,
+  recordInvestigationHistory,
+  recordSeen,
+  recordSnapshot,
+  recordSourceHealthHistory,
+} from './persist.js';
 import { errorMessage } from './util.js';
 import { isSourceConfigured, sourceProfile, sourceRequiredEnv } from './sourceProfiles.js';
 
@@ -175,6 +184,7 @@ class ThreatStore {
   private state: Record<ThreatSource, SourceState> = emptySourceState();
   private refreshing = false;
   private lastRefresh = 0;
+  private investigationHistory: InvestigationHistoryEntry[] = [];
   // Listeners notified after each successful refresh (used for SSE streaming).
   private refreshListeners = new Set<() => void>();
 
@@ -259,6 +269,7 @@ class ThreatStore {
     this.state = emptySourceState();
     this.lastRefresh = 0;
     this.refreshing = false;
+    this.investigationHistory = [];
     this.refreshListeners.clear();
   }
 
@@ -780,7 +791,32 @@ class ThreatStore {
     };
   }
 
-  investigateIndicator(indicator: string, requestedType?: IndicatorType): IocInvestigation {
+  private rememberInvestigation(result: IocInvestigation): void {
+    const entry: InvestigationHistoryEntry = {
+      id: crypto
+        .createHash('sha256')
+        .update(`${Date.now()}:${result.indicatorType}:${result.indicator}`)
+        .digest('hex')
+        .slice(0, 24),
+      ts: Date.now(),
+      indicator: result.indicator,
+      indicatorType: result.indicatorType,
+      posture: result.model.posture,
+      exactCount: result.exactMatches.length,
+      relatedCount: result.relatedIndicators.length,
+      highestSeverity: result.model.highestSeverity,
+      confidence: result.model.confidence,
+    };
+    this.investigationHistory.unshift(entry);
+    this.investigationHistory = this.investigationHistory.slice(0, 200);
+    recordInvestigationHistory(entry);
+  }
+
+  investigateIndicator(
+    indicator: string,
+    requestedType?: IndicatorType,
+    opts: { recordHistory?: boolean } = {},
+  ): IocInvestigation {
     const value = indicator.trim();
     const indicatorType = requestedType ?? this.inferIndicatorType(value);
     const normalized = value.toLowerCase();
@@ -789,7 +825,7 @@ class ThreatStore {
     );
     const related = this.relatedIndicators(exactMatches, value, indicatorType);
     const evidenceItems = exactMatches.length > 0 ? exactMatches : related;
-    return {
+    const result = {
       indicator: value,
       indicatorType,
       exactMatches,
@@ -797,6 +833,13 @@ class ThreatStore {
       sourceSummary: this.sourceSummary(evidenceItems),
       model: this.buildThreatModel(value, indicatorType, exactMatches, related),
     };
+    if (opts.recordHistory ?? true) this.rememberInvestigation(result);
+    return result;
+  }
+
+  getInvestigationHistory(limit = 50): InvestigationHistoryEntry[] {
+    if (isPersistEnabled()) return getPersistedInvestigationHistory(limit);
+    return this.investigationHistory.slice(0, clampLimit(limit, 50));
   }
 
   getSourceConfigStatus(): SourceConfigStatus[] {

@@ -11,6 +11,13 @@ import type {
   NotifyTestResponse,
   IocInvestigation,
   IndicatorType,
+  EnrichmentResponse,
+  IntegrationKind,
+  IntegrationTestResult,
+  EnrichmentProvider,
+  ThreatSource,
+  InvestigationHistoryEntry,
+  ArchitectureThreatModel,
 } from './types';
 
 const BASE = import.meta.env.VITE_API_BASE ?? '';
@@ -22,10 +29,14 @@ async function getJson<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-async function postJson<T>(path: string): Promise<T> {
+async function postJson<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
-    ...(TOKEN ? { headers: { 'x-api-token': TOKEN } } : {}),
+    headers: {
+      ...(TOKEN ? { 'x-api-token': TOKEN } : {}),
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   if (!res.ok) throw new Error(`Request failed: ${res.status}`);
   return (await res.json()) as T;
@@ -86,8 +97,45 @@ export function sendNotifyTest(): Promise<NotifyTestResponse> {
   return postJson<NotifyTestResponse>('/api/notify/test');
 }
 
+export function testIntegration(
+  kind: IntegrationKind,
+  id: ThreatSource | EnrichmentProvider,
+): Promise<IntegrationTestResult> {
+  return postJson<IntegrationTestResult>('/api/config/test', { kind, id });
+}
+
 export function investigateIoc(indicator: string, type?: IndicatorType | ''): Promise<IocInvestigation> {
   const params = new URLSearchParams({ indicator });
   if (type) params.set('type', type);
   return getJson<IocInvestigation>(`/api/investigate?${params.toString()}`);
+}
+
+export function enrichIoc(indicator: string, type: IndicatorType): Promise<EnrichmentResponse> {
+  const params = new URLSearchParams({ indicator, type });
+  return getJson<EnrichmentResponse>(`/api/enrich?${params.toString()}`);
+}
+
+export function fetchInvestigationHistory(limit = 20): Promise<{ enabled: boolean; points: InvestigationHistoryEntry[] }> {
+  return getJson<{ enabled: boolean; points: InvestigationHistoryEntry[] }>(
+    `/api/investigations/history?limit=${limit}`,
+  );
+}
+
+export function fetchArchitectureThreatModel(): Promise<ArchitectureThreatModel> {
+  return getJson<ArchitectureThreatModel>('/api/threat-model');
+}
+
+export async function fetchText(path: string): Promise<string> {
+  const res = await fetch(`${BASE}${path}`, TOKEN ? { headers: { 'x-api-token': TOKEN } } : undefined);
+  if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+  return await res.text();
+}
+
+export function investigationReport(indicator: string, type: IndicatorType, format: 'markdown' | 'json'): Promise<string> {
+  const params = new URLSearchParams({ indicator, type, format });
+  return fetchText(`/api/investigate/report?${params.toString()}`);
+}
+
+export function architectureReport(format: 'markdown' = 'markdown'): Promise<string> {
+  return fetchText(`/api/threat-model?format=${format}`);
 }

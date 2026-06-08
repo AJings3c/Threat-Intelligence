@@ -2,11 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   CveItem,
   ConfigStatusResponse,
+  EnrichmentProvider,
   HashIntelResponse,
+  IntegrationKind,
+  IntegrationTestResult,
   NotifyTestResponse,
   SourceHealth,
   SourceHealthHistoryPoint,
   Stats,
+  ThreatSource,
   ThreatIndicator,
   TrendPoint,
 } from './types';
@@ -21,6 +25,7 @@ import {
   fetchThreats,
   fetchTrend,
   sendNotifyTest,
+  testIntegration,
 } from './api';
 import { StatsCards } from './components/StatsCards';
 import { ThreatMap } from './components/ThreatMap';
@@ -32,6 +37,7 @@ import { TrendChart } from './components/TrendChart';
 import { HashIntelPanel } from './components/HashIntelPanel';
 import { ConfigStatusPanel } from './components/ConfigStatusPanel';
 import { IocInvestigationPanel } from './components/IocInvestigationPanel';
+import { ArchitectureThreatModelPanel } from './components/ArchitectureThreatModelPanel';
 
 const REFRESH_MS = 60_000;
 
@@ -48,6 +54,7 @@ export default function App() {
   });
   const [configStatus, setConfigStatus] = useState<ConfigStatusResponse | null>(null);
   const [notifyTestResult, setNotifyTestResult] = useState<NotifyTestResponse | null>(null);
+  const [integrationResults, setIntegrationResults] = useState<Record<string, IntegrationTestResult>>({});
   const [threats, setThreats] = useState<ThreatIndicator[]>([]);
   const [total, setTotal] = useState(0);
   const [threatsLoading, setThreatsLoading] = useState(true);
@@ -56,6 +63,7 @@ export default function App() {
   const [configLoading, setConfigLoading] = useState(true);
   const [configChecking, setConfigChecking] = useState(false);
   const [notifyTestLoading, setNotifyTestLoading] = useState(false);
+  const [integrationLoading, setIntegrationLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [filters, setFilters] = useState<FilterState>({
@@ -195,6 +203,19 @@ export default function App() {
     }
   }, []);
 
+  const handleIntegrationTest = useCallback(async (kind: IntegrationKind, id: ThreatSource | EnrichmentProvider) => {
+    const key = `${kind}:${id}`;
+    setIntegrationLoading(key);
+    try {
+      const result = await testIntegration(kind, id);
+      setIntegrationResults((prev) => ({ ...prev, [key]: result }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Integration test failed');
+    } finally {
+      setIntegrationLoading(null);
+    }
+  }, []);
+
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-5 md:px-6">
       <header className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -240,8 +261,11 @@ export default function App() {
           checking={configChecking}
           testResult={notifyTestResult}
           testLoading={notifyTestLoading}
+          integrationResults={integrationResults}
+          integrationLoading={integrationLoading}
           onRefresh={() => void loadConfigStatus(true)}
           onSendTest={() => void handleNotifyTest()}
+          onTestIntegration={(kind, id) => void handleIntegrationTest(kind, id)}
         />
       </div>
 
@@ -264,6 +288,10 @@ export default function App() {
 
       <div className="mb-5">
         <IocInvestigationPanel />
+      </div>
+
+      <div className="mb-5">
+        <ArchitectureThreatModelPanel />
       </div>
 
       <div className="mb-3">
