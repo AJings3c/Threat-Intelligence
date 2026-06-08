@@ -10,6 +10,15 @@ coverage/
 .vite/
 .cache/
 
+# Keep development-only docs and local Codex/agent skills out of the repository.
+*.md
+!/README.md
+docs/
+.codex/
+.agents/
+skills/
+**/SKILL.md
+
 # Local SQLite persistence + test scratch dirs
 data/
 *.db
