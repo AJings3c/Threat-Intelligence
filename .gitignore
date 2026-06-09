@@ -13,6 +13,8 @@ coverage/
 # Keep development-only docs and local Codex/agent skills out of the repository.
 *.md
 !/README.md
+!/README_ZH.md
+!/README_EN.md
 docs/
 .codex/
 .agents/
