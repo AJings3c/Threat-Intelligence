@@ -9,6 +9,7 @@ npm-debug.log*
 coverage/
 .vite/
 .cache/
+artifacts/
 
 # Keep development-only docs and local Codex/agent skills out of the repository.
 *.md
