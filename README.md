@@ -21,36 +21,36 @@
 <table>
   <tr>
     <td width="50%">
-      <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo for Sources and configuration workspace" width="180" />
+      <img src="readme-assets/overview-desktop.png" alt="总览工作区截图" />
+      <br />
+      <sub><strong>总览</strong></sub>
+    </td>
+    <td width="50%">
+      <img src="readme-assets/sources-desktop.png" alt="来源与配置工作区截图" />
       <br />
       <sub><strong>来源与配置</strong></sub>
     </td>
+  </tr>
+  <tr>
     <td width="50%">
-      <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo for IOC investigation workspace" width="180" />
+      <img src="readme-assets/investigation-desktop.png" alt="IOC 调查工作区截图" />
       <br />
       <sub><strong>IOC 调查</strong></sub>
     </td>
-  </tr>
-  <tr>
     <td width="50%">
-      <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo for Threat modeling workspace" width="180" />
+      <img src="readme-assets/modeling-desktop.png" alt="威胁建模工作区截图" />
       <br />
       <sub><strong>威胁建模</strong></sub>
     </td>
-    <td width="50%">
-      <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo for Intel feed table and details" width="180" />
-      <br />
-      <sub><strong>情报列表</strong></sub>
-    </td>
   </tr>
   <tr>
     <td width="50%">
-      <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo for Source-backed IOC graph" width="180" />
+      <img src="readme-assets/feed-desktop.png" alt="情报列表工作区截图" />
       <br />
-      <sub><strong>基于来源的 Graph</strong></sub>
+      <sub><strong>情报列表</strong></sub>
     </td>
     <td width="50%">
-      <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo for Mobile overview workspace" width="180" />
+      <img src="readme-assets/overview-mobile.png" alt="移动端总览工作区截图" />
       <br />
       <sub><strong>移动端工作台</strong></sub>
     </td>

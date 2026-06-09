@@ -21,36 +21,36 @@
 <table>
   <tr>
     <td width="50%">
-      <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo for Sources and configuration workspace" width="180" />
+      <img src="readme-assets/overview-desktop.png" alt="Overview workspace screenshot" />
+      <br />
+      <sub><strong>Overview</strong></sub>
+    </td>
+    <td width="50%">
+      <img src="readme-assets/sources-desktop.png" alt="Sources and configuration workspace screenshot" />
       <br />
       <sub><strong>Sources & Config</strong></sub>
     </td>
+  </tr>
+  <tr>
     <td width="50%">
-      <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo for IOC investigation workspace" width="180" />
+      <img src="readme-assets/investigation-desktop.png" alt="IOC investigation workspace screenshot" />
       <br />
       <sub><strong>IOC Investigation</strong></sub>
     </td>
-  </tr>
-  <tr>
     <td width="50%">
-      <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo for Threat modeling workspace" width="180" />
+      <img src="readme-assets/modeling-desktop.png" alt="Threat modeling workspace screenshot" />
       <br />
       <sub><strong>Threat Modeling</strong></sub>
     </td>
-    <td width="50%">
-      <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo for Intel feed table and details" width="180" />
-      <br />
-      <sub><strong>Intel Feed</strong></sub>
-    </td>
   </tr>
   <tr>
     <td width="50%">
-      <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo for Source-backed IOC graph" width="180" />
+      <img src="readme-assets/feed-desktop.png" alt="Intel feed workspace screenshot" />
       <br />
-      <sub><strong>Source-backed Graph</strong></sub>
+      <sub><strong>Intel Feed</strong></sub>
     </td>
     <td width="50%">
-      <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo for Mobile overview workspace" width="180" />
+      <img src="readme-assets/overview-mobile.png" alt="Mobile overview workspace screenshot" />
       <br />
       <sub><strong>Mobile Workbench</strong></sub>
     </td>
