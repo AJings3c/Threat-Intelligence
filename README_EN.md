@@ -5,7 +5,7 @@
 <h1 align="center">Threat Intelligence Platform</h1>
 
 <p align="center">
-  <strong>Evidence Command Workbench for source-backed threat intelligence, IOC investigation, and STRIDE/DREAD threat modeling.</strong>
+  <strong>Evidence Command Workbench for source-backed threat intelligence, IOC summary, and STRIDE/DREAD threat modeling.</strong>
 </p>
 
 <p align="center">
@@ -33,9 +33,9 @@
   </tr>
   <tr>
     <td width="50%">
-      <img src="readme-assets/investigation-desktop.png" alt="IOC investigation workspace screenshot" />
+      <img src="readme-assets/investigation-desktop.png" alt="IOC summary workspace screenshot" />
       <br />
-      <sub><strong>IOC Investigation</strong></sub>
+      <sub><strong>IOC Summary</strong></sub>
     </td>
     <td width="50%">
       <img src="readme-assets/modeling-desktop.png" alt="Threat modeling workspace screenshot" />
@@ -57,7 +57,7 @@
   </tr>
 </table>
 
-Threat Intelligence Platform is a React + Node.js workbench for collecting public and configured cyber threat intelligence, normalizing it into a single evidence model, and giving analysts a fast path from current threat posture to IOC investigation, graph exploration, STRIDE/DREAD modeling, and report export.
+Threat Intelligence Platform is a React + Node.js workbench for collecting public and configured cyber threat intelligence, normalizing it into a single evidence model, and giving analysts a fast path from current threat posture to IOC summary, graph exploration, STRIDE/DREAD modeling, and report export.
 
 The interface is built as an **Evidence Command Workbench**: a dense, operator-focused product UI with source health, configuration checks, IOC search, enrichment, Graph/List views, bilingual copy, and dark/light themes.
 
@@ -66,8 +66,8 @@ The interface is built as an **Evidence Command Workbench**: a dense, operator-f
 - Source health, freshness, configuration state, and per-source test results.
 - Global geolocated indicators, severity distribution, top origin countries, trends, CVEs, and malware/hash intelligence.
 - A filterable live threat feed with source, type, severity, country, timestamps, confidence, reliability, TLP, tags, and reference evidence.
-- IOC investigation for domains, IPs, URLs, hashes, CIDR ranges, and CVEs.
-- Local evidence-backed STRIDE scenarios, DREAD scoring, mitigations, next steps, Markdown/JSON reports, and investigation history.
+- IOC summary for domains, IPs, URLs, hashes, CIDR ranges, and CVEs.
+- Local evidence-backed STRIDE scenarios, DREAD scoring, mitigations, next steps, Markdown/JSON reports, and summary history.
 - Architecture-level threat modeling with assets, trust boundaries, data flows, attack paths, controls, and a Graph/List explorer.
 - STIX 2.1 export and a read-only TAXII 2.1 API.
 
@@ -79,7 +79,7 @@ The platform does not invent threat sources. Threat models and graphs are derive
 | --- | --- |
 | **Overview** | Source health, stats, map, CVE panel, trend panel, and Hash/Malware overview. |
 | **Sources & Config** | Source matrix, configuration status, source tests, enrichment provider tests, and notification test controls. |
-| **Investigation** | IOC command, exact matches, related indicators, enrichment, STRIDE scenarios, mitigations, report export, and source-backed graph. |
+| **IOC Summary** | IOC command, exact matches, related indicators, enrichment, STRIDE scenarios, mitigations, report export, and source-backed graph. |
 | **Threat Modeling** | Architecture model, DFD-style graph, STRIDE/DREAD explorer, assets, flows, controls, and attack paths. |
 | **Intel Feed** | Sticky filters, threat table, row selection, details side panel, and external references. |
 
@@ -225,9 +225,9 @@ When `frontend/dist` exists, the backend serves the built frontend and API from 
 | `GET /api/config/status` | Non-secret source, provider, notification, and persistence configuration state. |
 | `POST /api/config/test` | Test one source or enrichment provider. Requires admin role when auth is enabled. |
 | `GET /api/enrich` | On-demand enrichment for one observable. Requires analyst role when auth is enabled. |
-| `GET /api/investigate` | Local IOC investigation and STRIDE model. Requires analyst role when auth is enabled. |
-| `GET /api/investigations/history` | Recent IOC investigation history. |
-| `GET /api/investigate/report` | IOC investigation report as Markdown or JSON. |
+| `GET /api/investigate` | Local IOC summary and STRIDE model. Requires analyst role when auth is enabled. |
+| `GET /api/investigations/history` | Recent IOC summary history. |
+| `GET /api/investigate/report` | IOC summary report as Markdown or JSON. |
 | `GET /api/threat-model` | Architecture-level threat model as JSON or Markdown. |
 | `GET /api/export/stix` | STIX 2.1 bundle export. |
 | `GET /api/notify/status` | Notification configuration and last-run status. |
@@ -242,7 +242,7 @@ TAXII endpoints:
 - `GET /taxii2/root/collections/:id/objects/`
 - `GET /taxii2/root/collections/:id/manifest/`
 
-### IOC Investigation Examples
+### IOC Summary Examples
 
 ```bash
 curl 'http://localhost:4000/api/investigate?indicator=CVE-2026-28318&type=cve&lang=en'
@@ -291,7 +291,7 @@ When tokens are configured:
 - `API_TOKEN` is treated as an admin token.
 - `API_VIEWER_TOKENS`, `API_ANALYST_TOKENS`, and `API_ADMIN_TOKENS` provide role-scoped access.
 - Viewer routes cover read-only data.
-- Analyst routes cover investigation, enrichment, report generation, and threat modeling.
+- Analyst routes cover summary, enrichment, report generation, and threat modeling.
 - Admin routes cover integration tests, notification tests, and audit access.
 
 Tokens can be passed as:
@@ -320,7 +320,7 @@ The notifier primes its baseline on startup, so the first digest only contains n
 | `PORT` | `4000` | Backend port. |
 | `REFRESH_INTERVAL_MS` | `900000` | Feed refresh interval. |
 | `REFRESH_<SOURCE>_INTERVAL_MS` | Source default | Per-source minimum refresh interval override. |
-| `DATA_DIR` | Empty | Enables SQLite persistence for geo cache, trends, audit, push events, and investigation history. |
+| `DATA_DIR` | Empty | Enables SQLite persistence for geo cache, trends, audit, push events, and summary history. |
 | `VITE_API_BASE` | Empty | Frontend API base. Empty means same-origin or dev proxy. |
 | `VITE_API_PROXY` | `http://localhost:4000` | Vite dev proxy target for `/api`. |
 | `VITE_API_TOKEN` | Empty | Token attached by the frontend when API auth is enabled. It is embedded in the built bundle. |

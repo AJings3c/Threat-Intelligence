@@ -5,7 +5,7 @@
 <h1 align="center">Threat Intelligence Platform</h1>
 
 <p align="center">
-  <strong>面向来源证据、IOC 调查和 STRIDE/DREAD 威胁建模的证据指挥工作台。</strong>
+  <strong>面向来源证据、IOC 汇总和 STRIDE/DREAD 威胁建模的证据指挥工作台。</strong>
 </p>
 
 <p align="center">
@@ -33,9 +33,9 @@
   </tr>
   <tr>
     <td width="50%">
-      <img src="readme-assets/investigation-desktop.png" alt="IOC 调查工作区截图" />
+      <img src="readme-assets/investigation-desktop.png" alt="IOC 汇总工作区截图" />
       <br />
-      <sub><strong>IOC 调查</strong></sub>
+      <sub><strong>IOC 汇总</strong></sub>
     </td>
     <td width="50%">
       <img src="readme-assets/modeling-desktop.png" alt="威胁建模工作区截图" />
@@ -66,7 +66,7 @@ Threat Intelligence Platform 是一个面向安全运营、威胁情报分析、
 - 情报源健康状态、刷新时间、配置状态和单源测试结果。
 - 全球地理化 IOC、严重性分布、主要来源国家或地区、趋势、CVE、Hash 和恶意软件家族情报。
 - 可过滤威胁情报列表，包含来源、类型、严重性、国家或地区、时间、置信度、可靠性、TLP、标签和参考链接。
-- 针对域名、IP、URL、Hash、CIDR、CVE 的 IOC 调查结果。
+- 针对域名、IP、URL、Hash、CIDR、CVE 的 IOC 汇总结果。
 - 基于本地情报证据的 STRIDE 场景、DREAD 评分、缓解建议、下一步行动、Markdown/JSON 报告和历史记录。
 - 架构级威胁建模，包含资产、信任边界、数据流、攻击路径、控制措施和 Graph/List 双视图。
 - STIX 2.1 导出和只读 TAXII 2.1 API。
@@ -79,7 +79,7 @@ Threat Intelligence Platform 是一个面向安全运营、威胁情报分析、
 | --- | --- |
 | **总览 Overview** | 情报源健康、核心指标、地图、CVE、趋势、Hash/Malware 总览。 |
 | **来源与配置 Sources & Config** | 来源矩阵、配置检查、单源测试、富化服务商测试、通知测试。 |
-| **调查 Investigation** | IOC 命令、精确匹配、关联指标、富化、STRIDE 场景、缓解建议、报告导出和来源 Graph。 |
+| **IOC 汇总** | IOC 命令、精确匹配、关联指标、富化、STRIDE 场景、缓解建议、报告导出和来源 Graph。 |
 | **威胁建模 Threat Modeling** | 架构模型、DFD 风格 Graph、STRIDE/DREAD 场景、资产、数据流、控制项和攻击路径。 |
 | **情报列表 Intel Feed** | Sticky 筛选器、威胁表格、行选中、详情侧栏和外部参考链接。 |
 
@@ -225,9 +225,9 @@ npm start
 | `GET /api/config/status` | 非敏感配置状态，包括来源、富化服务、通知和持久化。 |
 | `POST /api/config/test` | 测试单个来源或富化服务。启用认证后需要 admin 角色。 |
 | `GET /api/enrich` | 对单个可观测对象进行按需富化。启用认证后需要 analyst 角色。 |
-| `GET /api/investigate` | IOC 调查和 STRIDE 模型。启用认证后需要 analyst 角色。 |
-| `GET /api/investigations/history` | IOC 调查历史。 |
-| `GET /api/investigate/report` | 生成 IOC 调查 Markdown 或 JSON 报告。 |
+| `GET /api/investigate` | IOC 汇总和 STRIDE 模型。启用认证后需要 analyst 角色。 |
+| `GET /api/investigations/history` | IOC 汇总历史。 |
+| `GET /api/investigate/report` | 生成 IOC 汇总 Markdown 或 JSON 报告。 |
 | `GET /api/threat-model` | 架构级威胁模型，支持 JSON 或 Markdown。 |
 | `GET /api/export/stix` | 导出 STIX 2.1 bundle。 |
 | `GET /api/notify/status` | 通知配置和最近运行状态。 |
@@ -242,7 +242,7 @@ TAXII 接口：
 - `GET /taxii2/root/collections/:id/objects/`
 - `GET /taxii2/root/collections/:id/manifest/`
 
-### IOC 调查示例
+### IOC 汇总示例
 
 ```bash
 curl 'http://localhost:4000/api/investigate?indicator=CVE-2026-28318&type=cve&lang=en'
@@ -320,7 +320,7 @@ Token 传递方式：
 | `PORT` | `4000` | 后端端口。 |
 | `REFRESH_INTERVAL_MS` | `900000` | 情报刷新周期。 |
 | `REFRESH_<SOURCE>_INTERVAL_MS` | 来源默认值 | 单个来源最小刷新间隔覆盖。 |
-| `DATA_DIR` | 空 | 启用 SQLite 持久化，包括 geo cache、趋势、审计、推送事件和调查历史。 |
+| `DATA_DIR` | 空 | 启用 SQLite 持久化，包括 geo cache、趋势、审计、推送事件和汇总历史。 |
 | `VITE_API_BASE` | 空 | 前端 API base。空值表示同源或开发代理。 |
 | `VITE_API_PROXY` | `http://localhost:4000` | Vite 开发环境 `/api` 代理目标。 |
 | `VITE_API_TOKEN` | 空 | 前端请求携带的 API token。它会进入构建产物，不是后端 secret。 |
