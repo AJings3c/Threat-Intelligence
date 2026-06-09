@@ -1,11 +1,14 @@
-import type { SourceHealth, SourceHealthHistoryPoint, ThreatSource } from '../types';
+import type { Language, SourceHealth, SourceHealthHistoryPoint, ThreatSource } from '../types';
+import { UI_TEXT } from '../i18n';
 
-function freshness(ageMs: number | null): string {
-  if (ageMs === null) return 'never';
+function freshness(ageMs: number | null, lang: Language): string {
+  const t = UI_TEXT[lang];
+  if (ageMs === null) return t.never;
   const mins = Math.floor(ageMs / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  return `${Math.floor(mins / 60)}h ago`;
+  if (mins < 1) return t.justNow;
+  if (mins < 60) return lang === 'zh' ? `${mins} 分钟前` : `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  return lang === 'zh' ? `${hours} 小时前` : `${hours}h ago`;
 }
 
 function historySummary(points: SourceHealthHistoryPoint[]): Map<ThreatSource, number> {
@@ -18,37 +21,47 @@ function historySummary(points: SourceHealthHistoryPoint[]): Map<ThreatSource, n
 }
 
 function statusColor(source: SourceHealth): string {
-  if (!source.ok) return 'bg-red-400';
+  if (source.status === 'disabled') return 'bg-slate-500';
+  if (source.status === 'error') return 'bg-red-400';
   if (source.deprecated) return 'bg-purple-300';
   if (source.stale) return 'bg-yellow-300';
+  if (source.status === 'warming') return 'bg-sky-300';
   return 'bg-emerald-400';
 }
 
-function tooltip(source: SourceHealth, failures: number): string {
+function tooltip(source: SourceHealth, failures: number, lang: Language): string {
+  const t = UI_TEXT[lang];
   const status =
-    source.lastError ??
-    source.deprecationMessage ??
-    (source.stale ? 'stale source data' : `Updated ${freshness(source.ageMs)}`);
-  return failures > 0 ? `${status} · ${failures} historical issue(s)` : status;
+    source.status === 'disabled'
+      ? `${t.notConfigured}${source.requiredEnv.length > 0 ? ` (${source.requiredEnv.join(', ')})` : ''}`
+      : source.status === 'warming'
+        ? t.warmingUp
+        : source.lastError ??
+          source.deprecationMessage ??
+          (source.stale ? t.staleSourceData : `${t.updated} ${freshness(source.ageMs, lang)}`);
+  return failures > 0 ? `${status} · ${failures} ${t.historicalIssues}` : status;
 }
 
 export function SourceHealthBar({
   sources,
   history,
+  lang,
 }: {
   sources: SourceHealth[];
   history: SourceHealthHistoryPoint[];
+  lang: Language;
 }) {
   const failures = historySummary(history);
   return (
     <div className="flex flex-wrap items-center gap-2">
       {sources.map((s) => {
-        const issueCount = failures.get(s.source) ?? 0;
+        const issueCount = s.status === 'disabled' ? 0 : failures.get(s.source) ?? 0;
         return (
           <div
             key={s.source}
-            className="flex items-center gap-2 rounded-lg border border-white/10 bg-panel/60 px-3 py-1.5"
-            title={tooltip(s, issueCount)}
+            className="flex min-h-10 items-center gap-2 rounded-lg border border-line/70 bg-panel-2/70 px-3 py-1.5"
+            title={tooltip(s, issueCount, lang)}
+            aria-label={`${s.label}: ${tooltip(s, issueCount, lang)}`}
           >
             <span className={`inline-block h-2 w-2 rounded-full ${statusColor(s)}`} />
             <span className="text-xs text-slate-300">{s.label}</span>

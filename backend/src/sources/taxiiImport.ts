@@ -24,6 +24,22 @@ interface ImportedStixObject {
 
 interface TaxiiEnvelope {
   objects?: ImportedStixObject[];
+  more?: boolean;
+  next?: string;
+}
+
+function envInt(value: string | undefined, fallback: number, min: number, max: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(parsed)));
+}
+
+function pageUrl(objectsUrl: string, next: string | null, addedAfter: string | null, limit: number): string {
+  const url = new URL(objectsUrl);
+  if (addedAfter && !next) url.searchParams.set('added_after', addedAfter);
+  if (next) url.searchParams.set('next', next);
+  url.searchParams.set('limit', String(limit));
+  return url.toString();
 }
 
 function parseTime(value: string | undefined): string | undefined {
@@ -34,7 +50,7 @@ function parseTime(value: string | undefined): string | undefined {
 
 function extractQuoted(pattern: string, property: string): string | null {
   const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`${escaped}\\s*=\\s*'([^']+)'`, 'i');
+  const re = new RegExp(`${escaped}\\s*(?:=|ISSUBSET)\\s*'([^']+)'`, 'i');
   return pattern.match(re)?.[1] ?? null;
 }
 
@@ -134,10 +150,20 @@ export async function fetchTaxiiImport(limit = 1000): Promise<FetchResult<Threat
     if (!bearer && username && password) {
       headers.Authorization = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
     }
-    const res = await fetchWithTimeout(objectsUrl, { headers }, 60_000);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = (await res.json()) as TaxiiEnvelope;
-    return { items: parseTaxiiObjects(data, limit), fetchedAt, error: null };
+    const pageLimit = envInt(process.env.TAXII_IMPORT_PAGE_LIMIT, Math.min(limit, 500), 1, 1000);
+    const maxPages = envInt(process.env.TAXII_IMPORT_MAX_PAGES, 5, 1, 100);
+    const addedAfter = process.env.TAXII_IMPORT_ADDED_AFTER?.trim() || null;
+    const objects: ImportedStixObject[] = [];
+    let next: string | null = null;
+    for (let page = 0; page < maxPages && objects.length < limit; page += 1) {
+      const res = await fetchWithTimeout(pageUrl(objectsUrl, next, addedAfter, pageLimit), { headers }, 60_000);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as TaxiiEnvelope;
+      objects.push(...(data.objects ?? []));
+      if (!data.more || !data.next) break;
+      next = data.next;
+    }
+    return { items: parseTaxiiObjects({ objects }, limit), fetchedAt, error: null };
   } catch (err) {
     return { items: [], fetchedAt, error: errorMessage(err) };
   }

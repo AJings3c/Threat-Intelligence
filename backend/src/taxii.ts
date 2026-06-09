@@ -50,17 +50,53 @@ export function buildTaxiiCollections(): { collections: TaxiiCollection[] } {
   return { collections: [taxiiCollection()] };
 }
 
-export function buildTaxiiEnvelope(objects: StixObject[]): { more: boolean; objects: StixObject[] } {
-  return { more: false, objects };
+export interface TaxiiPageOptions {
+  addedAfter?: string;
+  limit?: number;
+  next?: string;
 }
 
-export function buildTaxiiManifest(objects: StixObject[]): {
+interface TaxiiPage<T> {
+  more: boolean;
+  objects: T[];
+  next?: string;
+}
+
+function dateOf(value: unknown): number {
+  if (typeof value !== 'string') return 0;
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function pageObjects<T extends { id: string; created?: string; modified?: string }>(
+  objects: T[],
+  opts: TaxiiPageOptions = {},
+): TaxiiPage<T> {
+  const addedAfter = opts.addedAfter ? dateOf(opts.addedAfter) : 0;
+  const offset = opts.next && /^\d+$/.test(opts.next) ? Number(opts.next) : 0;
+  const limit = opts.limit && Number.isFinite(opts.limit) && opts.limit > 0 ? Math.min(Math.floor(opts.limit), 1000) : 1000;
+  const filtered = objects
+    .filter((object) => dateOf(object.created ?? object.modified) > addedAfter)
+    .sort((a, b) => dateOf(a.created ?? a.modified) - dateOf(b.created ?? b.modified) || a.id.localeCompare(b.id));
+  const page = filtered.slice(offset, offset + limit);
+  const more = offset + limit < filtered.length;
+  return { more, objects: page, ...(more ? { next: String(offset + limit) } : {}) };
+}
+
+export function buildTaxiiEnvelope(objects: StixObject[], opts: TaxiiPageOptions = {}): TaxiiPage<StixObject> {
+  return pageObjects(objects, opts);
+}
+
+export function buildTaxiiManifest(objects: StixObject[], opts: TaxiiPageOptions = {}): {
   more: boolean;
   objects: Array<{ id: string; date_added: string; version: string; media_type: string }>;
+  next?: string;
 } {
+  const page = pageObjects(objects, opts);
   return {
-    more: false,
-    objects: objects.map((object) => ({
+    more: page.more,
+    ...(page.next ? { next: page.next } : {}),
+    objects: page.objects.map((object) => ({
       id: object.id,
       date_added: typeof object.created === 'string' ? object.created : new Date().toISOString(),
       version: typeof object.modified === 'string' ? object.modified : new Date().toISOString(),

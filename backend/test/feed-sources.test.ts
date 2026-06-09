@@ -28,6 +28,9 @@ afterEach(() => {
   delete process.env.OTX_API_BASE;
   delete process.env.TAXII_IMPORT_OBJECTS_URL;
   delete process.env.TAXII_IMPORT_BEARER_TOKEN;
+  delete process.env.TAXII_IMPORT_ADDED_AFTER;
+  delete process.env.TAXII_IMPORT_PAGE_LIMIT;
+  delete process.env.TAXII_IMPORT_MAX_PAGES;
 });
 
 describe('parseOpenPhishFeed', () => {
@@ -277,6 +280,11 @@ describe('parseTaxiiObjects', () => {
           labels: ['malware'],
         },
         {
+          type: 'indicator',
+          id: 'indicator--3',
+          pattern: "[ipv4-addr:value ISSUBSET '203.0.113.0/24']",
+        },
+        {
           type: 'vulnerability',
           id: 'vulnerability--1',
           name: 'CVE-2026-0002',
@@ -284,7 +292,7 @@ describe('parseTaxiiObjects', () => {
       ],
     });
 
-    expect(items).toHaveLength(3);
+    expect(items).toHaveLength(4);
     expect(items[0]).toMatchObject({
       source: 'taxii_import',
       indicator: '198.51.100.2',
@@ -292,7 +300,8 @@ describe('parseTaxiiObjects', () => {
       severity: 'high',
     });
     expect(items[1]).toMatchObject({ indicatorType: 'hash', type: 'malicious_hash' });
-    expect(items[2]).toMatchObject({ indicator: 'CVE-2026-0002', indicatorType: 'cve' });
+    expect(items[2]).toMatchObject({ indicator: '203.0.113.0/24', indicatorType: 'cidr' });
+    expect(items[3]).toMatchObject({ indicator: 'CVE-2026-0002', indicatorType: 'cve' });
   });
 });
 
@@ -300,6 +309,38 @@ describe('optional OTX/TAXII sources', () => {
   it('return empty results when credentials or endpoints are not configured', async () => {
     await expect(fetchOtx()).resolves.toMatchObject({ items: [], error: null });
     await expect(fetchTaxiiImport()).resolves.toMatchObject({ items: [], error: null });
+  });
+
+  it('follows TAXII pagination and added_after', async () => {
+    process.env.TAXII_IMPORT_OBJECTS_URL = 'https://taxii.example/root/collections/1/objects/';
+    process.env.TAXII_IMPORT_ADDED_AFTER = '2026-06-08T00:00:00.000Z';
+    process.env.TAXII_IMPORT_PAGE_LIMIT = '1';
+    process.env.TAXII_IMPORT_MAX_PAGES = '2';
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        calls.push(url);
+        if (url.includes('next=cursor-1')) {
+          return jsonResponse({
+            more: false,
+            objects: [{ type: 'indicator', id: 'indicator--2', pattern: "[domain-name:value = 'b.example']" }],
+          });
+        }
+        return jsonResponse({
+          more: true,
+          next: 'cursor-1',
+          objects: [{ type: 'indicator', id: 'indicator--1', pattern: "[domain-name:value = 'a.example']" }],
+        });
+      }),
+    );
+
+    const result = await fetchTaxiiImport(10);
+
+    expect(result.error).toBeNull();
+    expect(result.items.map((item) => item.indicator)).toEqual(['a.example', 'b.example']);
+    expect(calls[0]).toContain('added_after=2026-06-08T00%3A00%3A00.000Z');
+    expect(calls[1]).toContain('next=cursor-1');
   });
 });
 

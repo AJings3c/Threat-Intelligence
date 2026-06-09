@@ -63,7 +63,7 @@ describe('buildStixBundle', () => {
     expect(patterns).toContain("[domain-name:value = 'evil.com']");
     expect(patterns).toContain("[url:value = 'http://bad/x']");
     expect(patterns).toContain(`[file:hashes.'SHA-256' = '${'a'.repeat(64)}']`);
-    expect(patterns).toContain("[ipv4-addr:value = '10.0.0.0/24']");
+    expect(patterns).toContain("[ipv4-addr:value ISSUBSET '10.0.0.0/24']");
 
     const ipIndicator = bundle.objects.find(
       (o) => o.type === 'indicator' && o.pattern === "[ipv4-addr:value = '1.2.3.4']",
@@ -84,5 +84,15 @@ describe('buildStixBundle', () => {
     const vulns = bundle.objects.filter((o) => o.type === 'vulnerability');
     expect(vulns).toHaveLength(1);
     expect(bundle.objects.some((o) => o.type === 'indicator')).toBe(false);
+  });
+
+  it('uses stable STIX object ids for the same indicator and CVE', () => {
+    const indicator = ind({ indicator: '1.2.3.4', indicatorType: 'ip' });
+    const first = buildStixBundle([indicator], [cve], new Date('2026-06-08T00:00:00.000Z'));
+    const second = buildStixBundle([indicator], [cve], new Date('2026-06-09T00:00:00.000Z'));
+
+    const firstIds = first.objects.map((object) => object.id).sort();
+    const secondIds = second.objects.map((object) => object.id).sort();
+    expect(firstIds).toEqual(secondIds);
   });
 });

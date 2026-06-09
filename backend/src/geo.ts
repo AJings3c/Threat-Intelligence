@@ -24,7 +24,11 @@ function ensureHydrated(): void {
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 
 export function isIpv4(value: string): boolean {
-  return IPV4_RE.test(value);
+  if (!IPV4_RE.test(value)) return false;
+  return value.split('.').every((part) => {
+    const n = Number(part);
+    return Number.isInteger(n) && n >= 0 && n <= 255;
+  });
 }
 
 // ip-api.com free batch endpoint: up to 100 IPs/request, ~15 requests/min.

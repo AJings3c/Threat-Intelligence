@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
 import { ComposableMap, Geographies, Geography, Marker } from 'react-simple-maps';
-import type { ThreatIndicator } from '../types';
+import type { Language, ThreatIndicator } from '../types';
 import { SEVERITY_COLORS } from '../constants';
+import { UI_TEXT } from '../i18n';
 // Bundle the basemap locally instead of fetching from a CDN at runtime, so the map
 // works in air-gapped / internal deployments and is reproducible.
 import countries110m from 'world-atlas/countries-110m.json';
@@ -10,7 +11,22 @@ const GEO_DATA = countries110m as unknown as Record<string, unknown>;
 
 const MAX_MARKERS = 600;
 
-export function ThreatMap({ points }: { points: ThreatIndicator[] }) {
+export function ThreatMap({ points, lang, theme }: { points: ThreatIndicator[]; lang: Language; theme: 'dark' | 'light' }) {
+  const t = UI_TEXT[lang];
+  const mapColor =
+    theme === 'light'
+      ? {
+          fill: '#dbe7f3',
+          hover: '#cbdbea',
+          stroke: '#b6c7d8',
+          markerStroke: '#ffffff',
+        }
+      : {
+          fill: '#16223c',
+          hover: '#1d2c4d',
+          stroke: '#243049',
+          markerStroke: '#0b1220',
+        };
   const markers = useMemo(() => {
     return points
       .filter((p) => p.lat !== undefined && p.lon !== undefined)
@@ -18,10 +34,12 @@ export function ThreatMap({ points }: { points: ThreatIndicator[] }) {
   }, [points]);
 
   return (
-    <div className="relative rounded-xl border border-white/10 bg-panel-2/70 p-2 shadow-lg">
+    <div className="surface relative overflow-hidden rounded-lg p-2">
       <div className="absolute left-4 top-3 z-10">
-        <h2 className="text-sm font-semibold text-slate-200">Global Threat Map</h2>
-        <p className="text-xs text-slate-400">{markers.length} geolocated indicators</p>
+        <h2 className="section-title">{t.globalThreatMap}</h2>
+        <p className="text-xs text-slate-400">
+          {markers.length} {t.geolocatedIndicators}
+        </p>
       </div>
       <ComposableMap
         projectionConfig={{ scale: 147 }}
@@ -34,12 +52,12 @@ export function ThreatMap({ points }: { points: ThreatIndicator[] }) {
               <Geography
                 key={geo.rsmKey}
                 geography={geo}
-                fill="#16223c"
-                stroke="#243049"
+                fill={mapColor.fill}
+                stroke={mapColor.stroke}
                 strokeWidth={0.4}
                 style={{
                   default: { outline: 'none' },
-                  hover: { fill: '#1d2c4d', outline: 'none' },
+                  hover: { fill: mapColor.hover, outline: 'none' },
                   pressed: { outline: 'none' },
                 }}
               />
@@ -52,7 +70,7 @@ export function ThreatMap({ points }: { points: ThreatIndicator[] }) {
               r={2.6}
               fill={SEVERITY_COLORS[m.severity]}
               fillOpacity={0.75}
-              stroke="#0b1220"
+              stroke={mapColor.markerStroke}
               strokeWidth={0.4}
             >
               <title>{`${m.indicator} · ${m.severity}${m.country ? ` · ${m.country}` : ''}`}</title>

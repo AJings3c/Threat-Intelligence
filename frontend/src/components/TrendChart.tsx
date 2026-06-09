@@ -1,4 +1,5 @@
-import type { TrendPoint } from '../types';
+import type { Language, TrendPoint } from '../types';
+import { UI_TEXT } from '../i18n';
 
 const W = 600;
 const H = 160;
@@ -8,12 +9,21 @@ function Empty({ msg }: { msg: string }) {
   return <div className="px-4 py-10 text-center text-xs text-slate-500">{msg}</div>;
 }
 
-export function TrendChart({ enabled, points }: { enabled: boolean; points: TrendPoint[] }) {
+export function TrendChart({
+  enabled,
+  points,
+  lang,
+}: {
+  enabled: boolean;
+  points: TrendPoint[];
+  lang: Language;
+}) {
+  const t = UI_TEXT[lang];
   let body;
   if (!enabled) {
-    body = <Empty msg="History disabled — set DATA_DIR to record indicator trends." />;
+    body = <Empty msg={t.trendHistoryDisabled} />;
   } else if (points.length < 2) {
-    body = <Empty msg="Collecting data — the trend appears after a few refresh cycles." />;
+    body = <Empty msg={t.trendCollecting} />;
   } else {
     const xs = points.map((p) => p.ts);
     const minX = Math.min(...xs);
@@ -32,7 +42,9 @@ export function TrendChart({ enabled, points }: { enabled: boolean; points: Tren
         </svg>
         <div className="flex justify-between px-4 pb-3 text-xs text-slate-400">
           <span>{new Date(minX).toLocaleDateString()}</span>
-          <span className="text-slate-300">Now: {last.total.toLocaleString()} indicators</span>
+          <span className="text-slate-300">
+            {t.now}: {last.total.toLocaleString()} {t.indicators}
+          </span>
           <span>{new Date(maxX).toLocaleDateString()}</span>
         </div>
       </>
@@ -40,9 +52,9 @@ export function TrendChart({ enabled, points }: { enabled: boolean; points: Tren
   }
 
   return (
-    <div className="rounded-xl border border-white/10 bg-panel/70 shadow-lg">
-      <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-        <h2 className="text-sm font-semibold text-slate-200">Indicator Trend (30d)</h2>
+    <div className="surface overflow-hidden rounded-lg">
+      <div className="flex items-center justify-between border-b border-line/60 bg-panel-2/45 px-4 py-4">
+        <h2 className="section-title">{t.trendTitle}</h2>
       </div>
       {body}
     </div>

@@ -30,7 +30,7 @@ function patternFor(t: ThreatIndicator): string | null {
     case 'url':
       return `[url:value = '${v}']`;
     case 'cidr':
-      return `[ipv4-addr:value = '${v}']`;
+      return `[ipv4-addr:value ISSUBSET '${v}']`;
     case 'hash':
       if (/^[a-f0-9]{64}$/i.test(t.indicator)) return `[file:hashes.'SHA-256' = '${v}']`;
       if (/^[a-f0-9]{40}$/i.test(t.indicator)) return `[file:hashes.'SHA-1' = '${v}']`;
@@ -41,13 +41,43 @@ function patternFor(t: ThreatIndicator): string | null {
   }
 }
 
-function vulnerability(id: string, created: string, name?: string, description?: string): StixObject {
+function deterministicUuid(seed: string): string {
+  const bytes = crypto.createHash('sha256').update(seed).digest().subarray(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function stixId(prefix: 'indicator' | 'vulnerability', seed: string): string {
+  return `${prefix}--${deterministicUuid(`${prefix}:${seed}`)}`;
+}
+
+function isoOr(value: string | undefined, fallback: string): string {
+  if (!value) return fallback;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed.toISOString();
+}
+
+function objectTimes(createdFallback: string, firstSeen?: string, lastSeen?: string): { created: string; modified: string } {
+  const created = isoOr(firstSeen ?? lastSeen, createdFallback);
+  const modified = isoOr(lastSeen, created);
+  return { created, modified };
+}
+
+function vulnerability(
+  id: string,
+  created: string,
+  modified: string,
+  name?: string,
+  description?: string,
+): StixObject {
   return {
     type: 'vulnerability',
     spec_version: '2.1',
-    id: `vulnerability--${crypto.randomUUID()}`,
+    id: stixId('vulnerability', id.toUpperCase()),
     created,
-    modified: created,
+    modified,
     name: name ?? id,
     description,
     external_references: [{ source_name: 'cve', external_id: id }],
@@ -67,17 +97,19 @@ export function buildStixBundle(
     if (t.indicatorType === 'cve') {
       if (seenVuln.has(t.indicator)) continue;
       seenVuln.add(t.indicator);
-      objects.push(vulnerability(t.indicator, created, t.title, t.description));
+      const times = objectTimes(created, t.firstSeen, t.lastSeen);
+      objects.push(vulnerability(t.indicator, times.created, times.modified, t.title, t.description));
       continue;
     }
     const pattern = patternFor(t);
     if (!pattern) continue;
+    const times = objectTimes(created, t.firstSeen, t.lastSeen);
     objects.push({
       type: 'indicator',
       spec_version: '2.1',
-      id: `indicator--${crypto.randomUUID()}`,
-      created,
-      modified: created,
+      id: stixId('indicator', `${t.indicatorType}:${t.indicator.toLowerCase()}`),
+      created: times.created,
+      modified: times.modified,
       name: t.title ?? t.indicator,
       description: t.description,
       indicator_types: ['malicious-activity'],
@@ -95,7 +127,15 @@ export function buildStixBundle(
   for (const c of cves) {
     if (seenVuln.has(c.id)) continue;
     seenVuln.add(c.id);
-    objects.push(vulnerability(c.id, created, c.title, c.description));
+    objects.push(
+      vulnerability(
+        c.id,
+        isoOr(c.published, created),
+        isoOr(c.lastModified ?? c.published, isoOr(c.published, created)),
+        c.title,
+        c.description,
+      ),
+    );
   }
 
   return { type: 'bundle', id: `bundle--${crypto.randomUUID()}`, objects };
