@@ -34,7 +34,7 @@ export function buildDigest(items: AlertItem[], generatedAt = new Date()): Diges
   const ts = generatedAt.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
   const title = `Threat Intel Alert · ${items.length} new indicator(s)`;
 
-  const mdLines: string[] = [`#### 🛡️ ${title}`, `> ${ts}`, ''];
+  const mdLines: string[] = [`#### 🛰️ ${title}`, `> ${ts}`, ''];
   const txtLines: string[] = [`${title} (${ts})`, ''];
 
   items.forEach((item, idx) => {

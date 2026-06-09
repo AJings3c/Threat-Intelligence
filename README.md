@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="frontend/public/brand-logo-light.png" alt="Threat Intelligence Platform logo" width="104" />
+  <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo" width="104" />
 </p>
 
 <h1 align="center">Threat Intelligence Platform</h1>
@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <img src="artifacts/home-dark-overview.png" alt="Threat Intelligence Platform homepage" width="92%" />
+  <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo" width="240" />
 </p>
 
 ## Feature Gallery / 功能截图
@@ -22,36 +22,36 @@
 <table>
   <tr>
     <td width="50%">
-      <img src="artifacts/vite8-sources-desktop.png" alt="Sources and configuration workspace" />
+      <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo for Sources and configuration workspace" width="180" />
       <br />
       <sub><strong>Sources & Config</strong> / 来源与配置</sub>
     </td>
     <td width="50%">
-      <img src="artifacts/vite8-investigation-desktop.png" alt="IOC investigation workspace" />
+      <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo for IOC investigation workspace" width="180" />
       <br />
       <sub><strong>IOC Investigation</strong> / IOC 调查</sub>
     </td>
   </tr>
   <tr>
     <td width="50%">
-      <img src="artifacts/vite8-modeling-desktop.png" alt="Threat modeling workspace" />
+      <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo for Threat modeling workspace" width="180" />
       <br />
       <sub><strong>Threat Modeling</strong> / 威胁建模</sub>
     </td>
     <td width="50%">
-      <img src="artifacts/vite8-feed-desktop.png" alt="Intel feed table and details" />
+      <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo for Intel feed table and details" width="180" />
       <br />
       <sub><strong>Intel Feed</strong> / 情报列表</sub>
     </td>
   </tr>
   <tr>
     <td width="50%">
-      <img src="artifacts/source-backed-ioc-graph.png" alt="Source-backed IOC graph" />
+      <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo for Source-backed IOC graph" width="180" />
       <br />
       <sub><strong>Source-backed Graph</strong> / 基于来源的 Graph</sub>
     </td>
     <td width="50%">
-      <img src="artifacts/uiux-workbench-overview-mobile.png" alt="Mobile overview workspace" />
+      <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo for Mobile overview workspace" width="180" />
       <br />
       <sub><strong>Mobile Workbench</strong> / 移动端工作台</sub>
     </td>
@@ -96,7 +96,7 @@ The UI supports explicit dark and light theme switching. Theme choice is stored 
 | `frontend/public/brand-logo-light.png` | UI logo and favicon in light theme. |
 | `frontend/public/brand-logo.png` | Default compatibility logo. |
 
-The old shield logo has been removed.
+The previous icon set has been removed.
 
 ### Data Sources
 
@@ -414,7 +414,7 @@ Threat Intelligence Platform 是一个面向安全运营、威胁情报分析、
 | `frontend/public/brand-logo-light.png` | 浅色模式 UI logo 和 favicon。 |
 | `frontend/public/brand-logo.png` | 默认兼容 logo。 |
 
-旧盾牌 logo 已移除。
+旧图标已移除。
 
 ### 情报来源
 
