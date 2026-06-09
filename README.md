@@ -14,9 +14,49 @@
 </p>
 
 <p align="center">
-  <img src="artifacts/home-dark-overview.png" alt="Dark homepage" width="48%" />
-  <img src="artifacts/home-light-overview.png" alt="Light homepage" width="48%" />
+  <img src="artifacts/home-dark-overview.png" alt="Threat Intelligence Platform homepage" width="92%" />
 </p>
+
+## Feature Gallery / 功能截图
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="artifacts/vite8-sources-desktop.png" alt="Sources and configuration workspace" />
+      <br />
+      <sub><strong>Sources & Config</strong> / 来源与配置</sub>
+    </td>
+    <td width="50%">
+      <img src="artifacts/vite8-investigation-desktop.png" alt="IOC investigation workspace" />
+      <br />
+      <sub><strong>IOC Investigation</strong> / IOC 调查</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="artifacts/vite8-modeling-desktop.png" alt="Threat modeling workspace" />
+      <br />
+      <sub><strong>Threat Modeling</strong> / 威胁建模</sub>
+    </td>
+    <td width="50%">
+      <img src="artifacts/vite8-feed-desktop.png" alt="Intel feed table and details" />
+      <br />
+      <sub><strong>Intel Feed</strong> / 情报列表</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="artifacts/source-backed-ioc-graph.png" alt="Source-backed IOC graph" />
+      <br />
+      <sub><strong>Source-backed Graph</strong> / 基于来源的 Graph</sub>
+    </td>
+    <td width="50%">
+      <img src="artifacts/uiux-workbench-overview-mobile.png" alt="Mobile overview workspace" />
+      <br />
+      <sub><strong>Mobile Workbench</strong> / 移动端工作台</sub>
+    </td>
+  </tr>
+</table>
 
 ## English
 
