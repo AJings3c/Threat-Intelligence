@@ -127,6 +127,82 @@ export function initPersistence(): void {
       );
       CREATE INDEX IF NOT EXISTS idx_audit_events_ts
         ON audit_events(ts);
+
+      -- Phase 1: Platform Upgrade Tables
+      CREATE TABLE IF NOT EXISTS cases (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        status TEXT CHECK(status IN ('open','investigating','resolved','closed')) NOT NULL,
+        severity TEXT CHECK(severity IN ('low','medium','high','critical')) NOT NULL,
+        assignee TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_cases_status ON cases(status);
+      CREATE INDEX IF NOT EXISTS idx_cases_assignee ON cases(assignee);
+
+      CREATE TABLE IF NOT EXISTS case_iocs (
+        case_id TEXT NOT NULL,
+        ioc_id TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        PRIMARY KEY (case_id, ioc_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_case_iocs_ioc ON case_iocs(ioc_id);
+
+      CREATE TABLE IF NOT EXISTS case_comments (
+        id TEXT PRIMARY KEY,
+        case_id TEXT NOT NULL,
+        author TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_case_comments_case ON case_comments(case_id);
+
+      CREATE TABLE IF NOT EXISTS rules (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        trigger_type TEXT CHECK(trigger_type IN ('ioc_match','threshold','schedule')) NOT NULL,
+        trigger_config TEXT NOT NULL,
+        actions TEXT NOT NULL,
+        enabled INTEGER DEFAULT 1,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_rules_enabled ON rules(enabled);
+
+      CREATE TABLE IF NOT EXISTS rule_executions (
+        id TEXT PRIMARY KEY,
+        rule_id TEXT NOT NULL,
+        triggered_at INTEGER NOT NULL,
+        actions_taken TEXT NOT NULL,
+        success INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_rule_executions_rule ON rule_executions(rule_id);
+      CREATE INDEX IF NOT EXISTS idx_rule_executions_triggered ON rule_executions(triggered_at);
+
+      CREATE TABLE IF NOT EXISTS enrichment_cache (
+        ioc_value TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        result TEXT NOT NULL,
+        cached_at INTEGER NOT NULL,
+        PRIMARY KEY (ioc_value, provider)
+      );
+      CREATE INDEX IF NOT EXISTS idx_enrichment_cache_cached_at ON enrichment_cache(cached_at);
+
+      CREATE TABLE IF NOT EXISTS false_positives (
+        ioc_value TEXT PRIMARY KEY,
+        marked_by TEXT NOT NULL,
+        reason TEXT,
+        marked_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS hunt_history (
+        id TEXT PRIMARY KEY,
+        query TEXT NOT NULL,
+        results_count INTEGER NOT NULL,
+        initiated_by TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_hunt_history_created ON hunt_history(created_at);
     `);
     console.log(`[persist] SQLite persistence enabled at ${dir}`);
   } catch (err) {
@@ -359,3 +435,256 @@ export function getSourceHealthHistory(sinceMs: number): SourceHealthHistoryPoin
     error: row.error || null,
   }));
 }
+
+// Phase 1: Platform Upgrade - Cases Management
+
+export function createCase(caseData: {
+  id: string;
+  title: string;
+  status: string;
+  severity: string;
+  assignee?: string;
+  createdAt: number;
+  updatedAt: number;
+}): void {
+  if (!db) return;
+  db.prepare(
+    'INSERT INTO cases (id, title, status, severity, assignee, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  ).run(
+    caseData.id,
+    caseData.title,
+    caseData.status,
+    caseData.severity,
+    caseData.assignee ?? null,
+    caseData.createdAt,
+    caseData.updatedAt,
+  );
+}
+
+export function updateCase(id: string, updates: { status?: string; assignee?: string; updatedAt: number }): void {
+  if (!db) return;
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  if (updates.status !== undefined) {
+    fields.push('status = ?');
+    values.push(updates.status);
+  }
+  if (updates.assignee !== undefined) {
+    fields.push('assignee = ?');
+    values.push(updates.assignee);
+  }
+  fields.push('updated_at = ?');
+  values.push(updates.updatedAt);
+
+  if (fields.length > 0) {
+    values.push(id);
+    db.prepare(`UPDATE cases SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+  }
+}
+
+export function getCase(id: string): unknown {
+  if (!db) return null;
+  return db.prepare('SELECT * FROM cases WHERE id = ?').get(id);
+}
+
+export function getCases(filters?: { status?: string; assignee?: string }): unknown[] {
+  if (!db) return [];
+  let query = 'SELECT * FROM cases';
+  const params: unknown[] = [];
+
+  if (filters) {
+    const conditions: string[] = [];
+    if (filters.status) {
+      conditions.push('status = ?');
+      params.push(filters.status);
+    }
+    if (filters.assignee) {
+      conditions.push('assignee = ?');
+      params.push(filters.assignee);
+    }
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+  }
+
+  query += ' ORDER BY created_at DESC';
+  return db.prepare(query).all(...params) as unknown[];
+}
+
+export function addCaseIoc(caseId: string, iocId: string, addedAt: number): void {
+  if (!db) return;
+  db.prepare('INSERT OR IGNORE INTO case_iocs (case_id, ioc_id, added_at) VALUES (?, ?, ?)').run(
+    caseId,
+    iocId,
+    addedAt,
+  );
+}
+
+export function getCaseIocs(caseId: string): Array<{ ioc_id: string; added_at: number }> {
+  if (!db) return [];
+  return db.prepare('SELECT ioc_id, added_at FROM case_iocs WHERE case_id = ? ORDER BY added_at ASC').all(caseId) as Array<{
+    ioc_id: string;
+    added_at: number;
+  }>;
+}
+
+export function addCaseComment(comment: {
+  id: string;
+  caseId: string;
+  author: string;
+  content: string;
+  createdAt: number;
+}): void {
+  if (!db) return;
+  db.prepare('INSERT INTO case_comments (id, case_id, author, content, created_at) VALUES (?, ?, ?, ?, ?)').run(
+    comment.id,
+    comment.caseId,
+    comment.author,
+    comment.content,
+    comment.createdAt,
+  );
+}
+
+export function getCaseComments(caseId: string): unknown[] {
+  if (!db) return [];
+  return db.prepare('SELECT * FROM case_comments WHERE case_id = ? ORDER BY created_at ASC').all(caseId) as unknown[];
+}
+
+// Phase 1: Platform Upgrade - Rules Engine
+
+export function createRule(rule: {
+  id: string;
+  name: string;
+  triggerType: string;
+  triggerConfig: string;
+  actions: string;
+  enabled: number;
+  createdAt: number;
+}): void {
+  if (!db) return;
+  db.prepare(
+    'INSERT INTO rules (id, name, trigger_type, trigger_config, actions, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  ).run(rule.id, rule.name, rule.triggerType, rule.triggerConfig, rule.actions, rule.enabled, rule.createdAt);
+}
+
+export function updateRule(id: string, updates: { enabled?: number }): void {
+  if (!db) return;
+  if (updates.enabled !== undefined) {
+    db.prepare('UPDATE rules SET enabled = ? WHERE id = ?').run(updates.enabled, id);
+  }
+}
+
+export function getRule(id: string): unknown {
+  if (!db) return null;
+  return db.prepare('SELECT * FROM rules WHERE id = ?').get(id);
+}
+
+export function getRules(enabledOnly = false): unknown[] {
+  if (!db) return [];
+  const query = enabledOnly
+    ? 'SELECT * FROM rules WHERE enabled = 1 ORDER BY created_at DESC'
+    : 'SELECT * FROM rules ORDER BY created_at DESC';
+  return db.prepare(query).all() as unknown[];
+}
+
+export function recordRuleExecution(execution: {
+  id: string;
+  ruleId: string;
+  triggeredAt: number;
+  actionsTaken: string;
+  success: number;
+}): void {
+  if (!db) return;
+  db.prepare(
+    'INSERT INTO rule_executions (id, rule_id, triggered_at, actions_taken, success) VALUES (?, ?, ?, ?, ?)',
+  ).run(execution.id, execution.ruleId, execution.triggeredAt, execution.actionsTaken, execution.success);
+}
+
+export function getRuleExecutions(ruleId: string, limit = 50): unknown[] {
+  if (!db) return [];
+  return db
+    .prepare('SELECT * FROM rule_executions WHERE rule_id = ? ORDER BY triggered_at DESC LIMIT ?')
+    .all(ruleId, Math.min(limit, 200)) as unknown[];
+}
+
+// Phase 1: Platform Upgrade - Enrichment Cache
+
+export function getEnrichmentCache(iocValue: string, provider: string): unknown {
+  if (!db) return null;
+  const row = db.prepare('SELECT * FROM enrichment_cache WHERE ioc_value = ? AND provider = ?').get(iocValue, provider);
+  if (!row) return null;
+
+  const cached = row as { cached_at: number };
+  const ttl = 3600 * 1000;
+  if (Date.now() - cached.cached_at > ttl) {
+    db.prepare('DELETE FROM enrichment_cache WHERE ioc_value = ? AND provider = ?').run(iocValue, provider);
+    return null;
+  }
+
+  return row;
+}
+
+export function setEnrichmentCache(iocValue: string, provider: string, result: string, cachedAt: number): void {
+  if (!db) return;
+  db.prepare(
+    'INSERT OR REPLACE INTO enrichment_cache (ioc_value, provider, result, cached_at) VALUES (?, ?, ?, ?)',
+  ).run(iocValue, provider, result, cachedAt);
+}
+
+export function cleanExpiredCache(ttlMs = 3600 * 1000): void {
+  if (!db) return;
+  const cutoff = Date.now() - ttlMs;
+  db.prepare('DELETE FROM enrichment_cache WHERE cached_at < ?').run(cutoff);
+}
+
+// Phase 1: Platform Upgrade - False Positives
+
+export function markFalsePositive(iocValue: string, markedBy: string, reason: string | null, markedAt: number): void {
+  if (!db) return;
+  db.prepare('INSERT OR REPLACE INTO false_positives (ioc_value, marked_by, reason, marked_at) VALUES (?, ?, ?, ?)').run(
+    iocValue,
+    markedBy,
+    reason,
+    markedAt,
+  );
+}
+
+export function isFalsePositive(iocValue: string): boolean {
+  if (!db) return false;
+  const row = db.prepare('SELECT 1 FROM false_positives WHERE ioc_value = ?').get(iocValue);
+  return row !== undefined;
+}
+
+export function getFalsePositives(): unknown[] {
+  if (!db) return [];
+  return db.prepare('SELECT * FROM false_positives ORDER BY marked_at DESC').all() as unknown[];
+}
+
+// Phase 1: Platform Upgrade - Hunt History
+
+export function recordHuntHistory(hunt: {
+  id: string;
+  query: string;
+  resultsCount: number;
+  initiatedBy: string;
+  createdAt: number;
+}): void {
+  if (!db) return;
+  db.prepare('INSERT INTO hunt_history (id, query, results_count, initiated_by, created_at) VALUES (?, ?, ?, ?, ?)').run(
+    hunt.id,
+    hunt.query,
+    hunt.resultsCount,
+    hunt.initiatedBy,
+    hunt.createdAt,
+  );
+}
+
+export function getHuntHistory(limit = 50): unknown[] {
+  if (!db) return [];
+  return db
+    .prepare('SELECT * FROM hunt_history ORDER BY created_at DESC LIMIT ?')
+    .all(Math.min(limit, 200)) as unknown[];
+}
+
+

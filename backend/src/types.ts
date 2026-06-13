@@ -338,3 +338,90 @@ export interface AuditEvent {
   ok: boolean;
   detail: string;
 }
+
+// Phase 1: Platform Upgrade Types
+
+export type CaseStatus = 'open' | 'investigating' | 'resolved' | 'closed';
+
+export interface Case {
+  id: string;
+  title: string;
+  status: CaseStatus;
+  severity: Severity;
+  assignee?: string;
+  iocIds: string[];
+  comments: CaseComment[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CaseComment {
+  id: string;
+  caseId: string;
+  author: string;
+  content: string;
+  createdAt: number;
+}
+
+export type RuleTriggerType = 'ioc_match' | 'threshold' | 'schedule';
+export type RuleActionType = 'webhook' | 'ticket' | 'block' | 'enrich';
+
+export interface RuleAction {
+  type: RuleActionType;
+  config: Record<string, unknown>;
+}
+
+export interface Rule {
+  id: string;
+  name: string;
+  triggerType: RuleTriggerType;
+  triggerConfig: Record<string, unknown>;
+  actions: RuleAction[];
+  enabled: boolean;
+  createdAt: number;
+}
+
+export interface RuleExecution {
+  id: string;
+  ruleId: string;
+  triggeredAt: number;
+  actionsTaken: RuleAction[];
+  success: boolean;
+}
+
+export interface EnrichmentCache {
+  iocValue: string;
+  provider: string;
+  result: Record<string, unknown>;
+  cachedAt: number;
+}
+
+export interface FalsePositive {
+  iocValue: string;
+  markedBy: string;
+  reason?: string;
+  markedAt: number;
+}
+
+export interface HuntQuery {
+  iocs: string[];
+  timeRange: { start: number; end: number };
+  sources?: ThreatSource[];
+}
+
+export interface HuntResult {
+  ioc: string;
+  matches: ThreatIndicator[];
+  firstSeen?: string;
+  lastSeen?: string;
+  confidence: number;
+}
+
+export interface HuntHistory {
+  id: string;
+  query: string;
+  resultsCount: number;
+  initiatedBy: string;
+  createdAt: number;
+}
+
