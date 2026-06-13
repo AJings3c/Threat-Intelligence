@@ -399,3 +399,21 @@ export interface ArchitectureThreatModel {
   assumptions: string[];
   nextSteps: string[];
 }
+
+export type RuleTriggerType = 'ioc_match' | 'threshold' | 'schedule';
+export type RuleActionType = 'webhook' | 'ticket' | 'block' | 'enrich';
+
+export interface RuleAction {
+  type: RuleActionType;
+  config: Record<string, unknown>;
+}
+
+export interface Rule {
+  id: string;
+  name: string;
+  triggerType: RuleTriggerType;
+  triggerConfig: Record<string, unknown>;
+  actions: RuleAction[];
+  enabled: boolean;
+  createdAt: number;
+}

@@ -16,6 +16,9 @@ import {
   Search,
   SlidersHorizontal,
   Sun,
+  Target,
+  Zap,
+  BarChart3,
 } from 'lucide-react';
 import type {
   CveItem,
@@ -58,14 +61,17 @@ import { HashIntelPanel } from './components/HashIntelPanel';
 import { ConfigStatusPanel } from './components/ConfigStatusPanel';
 import { IocInvestigationPanel } from './components/IocInvestigationPanel';
 import { ArchitectureThreatModelPanel } from './components/ArchitectureThreatModelPanel';
+import { HuntWorkspace } from './components/HuntWorkspace';
+import { RuleEditor } from './components/RuleEditor';
+import { QualityDashboard } from './components/QualityDashboard';
 
 const REFRESH_MS = 60_000;
 
-export type WorkspaceId = 'overview' | 'sources' | 'investigation' | 'modeling' | 'feed';
+export type WorkspaceId = 'overview' | 'sources' | 'investigation' | 'modeling' | 'feed' | 'hunt' | 'rules' | 'quality';
 export type DensityMode = 'comfortable' | 'compact';
 export type ThemeMode = 'dark' | 'light';
 
-const WORKSPACE_ORDER: WorkspaceId[] = ['overview', 'sources', 'investigation', 'modeling', 'feed'];
+const WORKSPACE_ORDER: WorkspaceId[] = ['overview', 'hunt', 'rules', 'quality', 'sources', 'investigation', 'modeling', 'feed'];
 
 const WORKBENCH_TEXT: Record<
   Language,
@@ -136,6 +142,9 @@ const WORKBENCH_TEXT: Record<
     feedCount: 'Feed count',
     workspace: {
       overview: 'Overview',
+      hunt: 'Hunt',
+      rules: 'Rules',
+      quality: 'Quality',
       sources: 'Sources',
       investigation: 'IOC Summary',
       modeling: 'Modeling',
@@ -176,6 +185,9 @@ const WORKBENCH_TEXT: Record<
     feedCount: '情报数量',
     workspace: {
       overview: '总览',
+      hunt: '狩猎',
+      rules: '规则',
+      quality: '质量',
       sources: '来源',
       investigation: 'IOC 汇总',
       modeling: '建模',
@@ -188,6 +200,9 @@ const WORKBENCH_TEXT: Record<
 
 const WORKSPACE_ICON: Record<WorkspaceId, ComponentType<{ className?: string }>> = {
   overview: LayoutDashboard,
+  hunt: Target,
+  rules: Zap,
+  quality: BarChart3,
   sources: DatabaseZap,
   investigation: Radar,
   modeling: Network,
@@ -809,6 +824,27 @@ export default function App() {
                 initialIndicator={investigationSeed.value}
                 initialNonce={investigationSeed.nonce}
               />
+            </>
+          )}
+
+          {activeWorkspace === 'hunt' && (
+            <>
+              <WorkspaceTitle icon={Target} title="Threat Hunting" subtitle="Batch IOC search across historical intelligence feeds" />
+              <HuntWorkspace lang={language} />
+            </>
+          )}
+
+          {activeWorkspace === 'rules' && (
+            <>
+              <WorkspaceTitle icon={Zap} title="Rules & Automation" subtitle="Configure automated responses to threat intelligence" />
+              <RuleEditor lang={language} />
+            </>
+          )}
+
+          {activeWorkspace === 'quality' && (
+            <>
+              <WorkspaceTitle icon={BarChart3} title="Intelligence Quality" subtitle="Quality scoring, time decay, and false positive tracking" />
+              <QualityDashboard lang={language} />
             </>
           )}
 
