@@ -30,6 +30,7 @@ import { parseLanguage } from './language.js';
 import { createCase, updateCase, getCase, listCases, addIocToCase, addComment } from './cases.js';
 import { batchHunt, getHuntHistory } from './hunt.js';
 import { createRule, updateRule, getRule, listRules, getRuleExecutionHistory } from './rules/index.js';
+import { markAsFalsePositive, listFalsePositives, getQualityDistribution, getQualityTrend } from './quality.js';
 
 
 const PORT = Number(process.env.PORT ?? 4000);
@@ -595,6 +596,52 @@ api.get('/rules/:id/executions', auth.requireRole('analyst'), (req, res) => {
   try {
     const executions = getRuleExecutionHistory(req.params.id, Number.isFinite(limit) ? limit : 50);
     res.json({ executions });
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+// Phase 2: Platform Upgrade - Quality Scoring API
+
+api.get('/quality/distribution', auth.requireRole('analyst'), (_req, res) => {
+  try {
+    const indicators = store.getIndicators();
+    const distribution = getQualityDistribution(indicators);
+    res.json(distribution);
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+api.get('/quality/trend', auth.requireRole('analyst'), (req, res) => {
+  const days = req.query.days ? Number(req.query.days) : 7;
+  try {
+    const indicators = store.getIndicators();
+    const trend = getQualityTrend(indicators, Number.isFinite(days) && days > 0 ? Math.min(days, 90) : 7);
+    res.json({ trend });
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+api.post('/quality/false-positive', auth.requireRole('analyst'), audit('mark_false_positive'), (req, res) => {
+  const { iocValue, markedBy, reason } = req.body || {};
+  if (!iocValue || !markedBy) {
+    res.status(400).json({ error: 'missing required fields: iocValue, markedBy' });
+    return;
+  }
+  try {
+    markAsFalsePositive(iocValue, markedBy, reason);
+    res.json({ success: true, iocValue });
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+api.get('/quality/false-positives', auth.requireRole('analyst'), (_req, res) => {
+  try {
+    const falsePositives = listFalsePositives();
+    res.json({ falsePositives });
   } catch (err) {
     res.status(500).json({ error: errorMessage(err) });
   }
