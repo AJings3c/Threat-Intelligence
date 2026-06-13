@@ -19,6 +19,7 @@ import {
   Target,
   Zap,
   BarChart3,
+  FolderKanban,
 } from 'lucide-react';
 import type {
   CveItem,
@@ -64,14 +65,15 @@ import { ArchitectureThreatModelPanel } from './components/ArchitectureThreatMod
 import { HuntWorkspace } from './components/HuntWorkspace';
 import { RuleEditor } from './components/RuleEditor';
 import { QualityDashboard } from './components/QualityDashboard';
+import { CaseBoard } from './components/CaseBoard';
 
 const REFRESH_MS = 60_000;
 
-export type WorkspaceId = 'overview' | 'sources' | 'investigation' | 'modeling' | 'feed' | 'hunt' | 'rules' | 'quality';
+export type WorkspaceId = 'overview' | 'sources' | 'investigation' | 'modeling' | 'feed' | 'hunt' | 'rules' | 'quality' | 'cases';
 export type DensityMode = 'comfortable' | 'compact';
 export type ThemeMode = 'dark' | 'light';
 
-const WORKSPACE_ORDER: WorkspaceId[] = ['overview', 'hunt', 'rules', 'quality', 'sources', 'investigation', 'modeling', 'feed'];
+const WORKSPACE_ORDER: WorkspaceId[] = ['overview', 'hunt', 'cases', 'rules', 'quality', 'sources', 'investigation', 'modeling', 'feed'];
 
 const WORKBENCH_TEXT: Record<
   Language,
@@ -143,6 +145,7 @@ const WORKBENCH_TEXT: Record<
     workspace: {
       overview: 'Overview',
       hunt: 'Hunt',
+      cases: 'Cases',
       rules: 'Rules',
       quality: 'Quality',
       sources: 'Sources',
@@ -186,6 +189,7 @@ const WORKBENCH_TEXT: Record<
     workspace: {
       overview: '总览',
       hunt: '狩猎',
+      cases: '案例',
       rules: '规则',
       quality: '质量',
       sources: '来源',
@@ -201,6 +205,7 @@ const WORKBENCH_TEXT: Record<
 const WORKSPACE_ICON: Record<WorkspaceId, ComponentType<{ className?: string }>> = {
   overview: LayoutDashboard,
   hunt: Target,
+  cases: FolderKanban,
   rules: Zap,
   quality: BarChart3,
   sources: DatabaseZap,
@@ -831,6 +836,13 @@ export default function App() {
             <>
               <WorkspaceTitle icon={Target} title="Threat Hunting" subtitle="Batch IOC search across historical intelligence feeds" />
               <HuntWorkspace lang={language} />
+            </>
+          )}
+
+          {activeWorkspace === 'cases' && (
+            <>
+              <WorkspaceTitle icon={FolderKanban} title="Cases" subtitle="Collaborative incident investigation and tracking" />
+              <CaseBoard lang={language} />
             </>
           )}
 
