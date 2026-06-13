@@ -27,6 +27,9 @@ import { buildArchitectureThreatModel } from './architectureThreatModel.js';
 import { apiAuth, audit, corsOptions, rateLimit } from './security.js';
 import type { EnrichmentProvider, IntegrationKind, ThreatSource } from './types.js';
 import { parseLanguage } from './language.js';
+import { createCase, updateCase, getCase, listCases, addIocToCase, addComment } from './cases.js';
+import { batchHunt, getHuntHistory } from './hunt.js';
+
 
 const PORT = Number(process.env.PORT ?? 4000);
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS ?? 15 * 60 * 1000);
@@ -391,6 +394,134 @@ api.post('/notify/test', auth.requireRole('admin'), audit('notify_test'), (req, 
     .sendTest()
     .then((out) => res.json(out))
     .catch((err) => res.status(500).json({ error: errorMessage(err) }));
+});
+
+// Phase 1: Platform Upgrade - Cases Management API
+
+api.post('/cases', auth.requireRole('analyst'), audit('create_case'), (req, res) => {
+  const { title, severity, assignee } = req.body || {};
+  if (!title || !severity) {
+    res.status(400).json({ error: 'missing required fields: title, severity' });
+    return;
+  }
+  if (!['low', 'medium', 'high', 'critical'].includes(severity)) {
+    res.status(400).json({ error: 'invalid severity level' });
+    return;
+  }
+  try {
+    const newCase = createCase({ title, severity, assignee });
+    res.status(201).json(newCase);
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+api.get('/cases', auth.requireRole('analyst'), (_req, res) => {
+  const status = typeof _req.query.status === 'string' ? _req.query.status : undefined;
+  const assignee = typeof _req.query.assignee === 'string' ? _req.query.assignee : undefined;
+  try {
+    const cases = listCases({ status: status as any, assignee });
+    res.json({ cases });
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+api.get('/cases/:id', auth.requireRole('analyst'), (req, res) => {
+  try {
+    const caseData = getCase(req.params.id);
+    if (!caseData) {
+      res.status(404).json({ error: 'case not found' });
+      return;
+    }
+    res.json(caseData);
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+api.patch('/cases/:id', auth.requireRole('analyst'), audit('update_case'), (req, res) => {
+  const { status, assignee } = req.body || {};
+  try {
+    const updated = updateCase(req.params.id, { status, assignee });
+    if (!updated) {
+      res.status(404).json({ error: 'case not found' });
+      return;
+    }
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+api.post('/cases/:id/iocs', auth.requireRole('analyst'), audit('add_case_ioc'), (req, res) => {
+  const { iocId } = req.body || {};
+  if (!iocId) {
+    res.status(400).json({ error: 'missing required field: iocId' });
+    return;
+  }
+  try {
+    const success = addIocToCase(req.params.id, iocId);
+    if (!success) {
+      res.status(404).json({ error: 'case not found' });
+      return;
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+api.post('/cases/:id/comments', auth.requireRole('analyst'), audit('add_case_comment'), (req, res) => {
+  const { author, content } = req.body || {};
+  if (!author || !content) {
+    res.status(400).json({ error: 'missing required fields: author, content' });
+    return;
+  }
+  try {
+    const comment = addComment(req.params.id, { author, content });
+    if (!comment) {
+      res.status(404).json({ error: 'case not found' });
+      return;
+    }
+    res.status(201).json(comment);
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+// Phase 1: Platform Upgrade - Threat Hunting API
+
+api.post('/hunt/batch', auth.requireRole('analyst'), audit('hunt_batch'), (req, res) => {
+  const { iocs, timeRange, sources } = req.body || {};
+  if (!iocs || !Array.isArray(iocs) || iocs.length === 0) {
+    res.status(400).json({ error: 'missing or invalid field: iocs (must be non-empty array)' });
+    return;
+  }
+  if (!timeRange || typeof timeRange.start !== 'number' || typeof timeRange.end !== 'number') {
+    res.status(400).json({ error: 'missing or invalid field: timeRange (must have start and end)' });
+    return;
+  }
+  try {
+    const result = batchHunt(
+      { iocs, timeRange, sources },
+      store.getIndicators(),
+      req.headers['x-user-id'] as string || 'unknown',
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+api.get('/hunt/history', auth.requireRole('analyst'), (_req, res) => {
+  const limit = _req.query.limit ? Number(_req.query.limit) : 50;
+  try {
+    const history = getHuntHistory(Number.isFinite(limit) ? limit : 50);
+    res.json({ history });
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
 });
 
 app.use('/api', api);
