@@ -20,7 +20,8 @@ import {
   TAXII_MEDIA_TYPE,
   taxiiCollection,
 } from './taxii.js';
-import { enrichIndicator, enrichmentConfigStatus, parseIndicatorType } from './enrich.js';
+import { enrichmentConfigStatus, parseIndicatorType } from './enrich.js';
+import { enrichWithCache, startCacheCleanupTask } from './enrichCache.js';
 import { testIntegration } from './integrationTests.js';
 import { investigationMarkdown, architectureThreatModelMarkdown } from './reports.js';
 import { buildArchitectureThreatModel } from './architectureThreatModel.js';
@@ -233,7 +234,7 @@ api.get('/enrich', auth.requireRole('analyst'), audit('enrich'), (req, res) => {
     res.status(400).json({ error: 'missing or invalid indicator/type query parameters' });
     return;
   }
-  enrichIndicator(indicator, indicatorType)
+  enrichWithCache(indicator, indicatorType)
     .then((result) => res.json(result))
     .catch((err) => res.status(500).json({ error: errorMessage(err) }));
 });
@@ -697,6 +698,9 @@ async function bootstrap(): Promise<void> {
 
   // Start the scheduled alert push (no-op if disabled / unconfigured).
   notifier.start();
+
+  // Start enrichment cache cleanup task (runs every hour).
+  startCacheCleanupTask();
 
   setInterval(() => {
     store
