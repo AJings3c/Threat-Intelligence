@@ -4,6 +4,7 @@ import {
   Bell,
   Binary,
   DatabaseZap,
+  Flame,
   Gauge,
   Globe2,
   Languages,
@@ -14,9 +15,11 @@ import {
   Radar,
   RefreshCw,
   Search,
+  Share2,
   SlidersHorizontal,
   Sun,
   Target,
+  Timer,
   Zap,
   BarChart3,
   FolderKanban,
@@ -66,14 +69,17 @@ import { HuntWorkspace } from './components/HuntWorkspace';
 import { RuleEditor } from './components/RuleEditor';
 import { QualityDashboard } from './components/QualityDashboard';
 import { CaseBoard } from './components/CaseBoard';
+import { ThreatNetworkGraph } from './components/ThreatNetworkGraph';
+import { AttackTimeline } from './components/AttackTimeline';
+import { ThreatHeatmap } from './components/ThreatHeatmap';
 
 const REFRESH_MS = 60_000;
 
-export type WorkspaceId = 'overview' | 'sources' | 'investigation' | 'modeling' | 'feed' | 'hunt' | 'rules' | 'quality' | 'cases';
+export type WorkspaceId = 'overview' | 'sources' | 'investigation' | 'modeling' | 'feed' | 'hunt' | 'rules' | 'quality' | 'cases' | 'network' | 'timeline' | 'heatmap';
 export type DensityMode = 'comfortable' | 'compact';
 export type ThemeMode = 'dark' | 'light';
 
-const WORKSPACE_ORDER: WorkspaceId[] = ['overview', 'hunt', 'cases', 'rules', 'quality', 'sources', 'investigation', 'modeling', 'feed'];
+const WORKSPACE_ORDER: WorkspaceId[] = ['overview', 'hunt', 'cases', 'rules', 'quality', 'network', 'timeline', 'heatmap', 'sources', 'investigation', 'modeling', 'feed'];
 
 const WORKBENCH_TEXT: Record<
   Language,
@@ -148,6 +154,9 @@ const WORKBENCH_TEXT: Record<
       cases: 'Cases',
       rules: 'Rules',
       quality: 'Quality',
+      network: 'Network',
+      timeline: 'Timeline',
+      heatmap: 'Heatmap',
       sources: 'Sources',
       investigation: 'IOC Summary',
       modeling: 'Modeling',
@@ -192,6 +201,9 @@ const WORKBENCH_TEXT: Record<
       cases: '案例',
       rules: '规则',
       quality: '质量',
+      network: '网络',
+      timeline: '时间线',
+      heatmap: '热力图',
       sources: '来源',
       investigation: 'IOC 汇总',
       modeling: '建模',
@@ -208,6 +220,9 @@ const WORKSPACE_ICON: Record<WorkspaceId, ComponentType<{ className?: string }>>
   cases: FolderKanban,
   rules: Zap,
   quality: BarChart3,
+  network: Share2,
+  timeline: Timer,
+  heatmap: Flame,
   sources: DatabaseZap,
   investigation: Radar,
   modeling: Network,
@@ -857,6 +872,27 @@ export default function App() {
             <>
               <WorkspaceTitle icon={BarChart3} title="Intelligence Quality" subtitle="Quality scoring, time decay, and false positive tracking" />
               <QualityDashboard lang={language} />
+            </>
+          )}
+
+          {activeWorkspace === 'network' && (
+            <>
+              <WorkspaceTitle icon={Share2} title="Threat Network" subtitle="IOC relationship visualization with force-directed graph" />
+              <ThreatNetworkGraph lang={language} indicators={threats} />
+            </>
+          )}
+
+          {activeWorkspace === 'timeline' && (
+            <>
+              <WorkspaceTitle icon={Timer} title="Attack Timeline" subtitle="Chronological attack chain reconstruction with MITRE ATT&CK mapping" />
+              <AttackTimeline lang={language} indicators={threats} />
+            </>
+          )}
+
+          {activeWorkspace === 'heatmap' && (
+            <>
+              <WorkspaceTitle icon={Flame} title="Geographic Heatmap" subtitle="Global threat density visualization with country-level aggregation" />
+              <ThreatHeatmap lang={language} indicators={threats} />
             </>
           )}
 
