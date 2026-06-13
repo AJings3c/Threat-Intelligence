@@ -29,6 +29,7 @@ import type { EnrichmentProvider, IntegrationKind, ThreatSource } from './types.
 import { parseLanguage } from './language.js';
 import { createCase, updateCase, getCase, listCases, addIocToCase, addComment } from './cases.js';
 import { batchHunt, getHuntHistory } from './hunt.js';
+import { createRule, updateRule, getRule, listRules, getRuleExecutionHistory } from './rules/index.js';
 
 
 const PORT = Number(process.env.PORT ?? 4000);
@@ -519,6 +520,81 @@ api.get('/hunt/history', auth.requireRole('analyst'), (_req, res) => {
   try {
     const history = getHuntHistory(Number.isFinite(limit) ? limit : 50);
     res.json({ history });
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+// Phase 1: Platform Upgrade - Rules Engine API
+
+api.post('/rules', auth.requireRole('admin'), audit('create_rule'), (req, res) => {
+  const { name, triggerType, triggerConfig, actions, enabled } = req.body || {};
+  if (!name || !triggerType || !triggerConfig || !actions) {
+    res.status(400).json({ error: 'missing required fields: name, triggerType, triggerConfig, actions' });
+    return;
+  }
+  if (!['ioc_match', 'threshold', 'schedule'].includes(triggerType)) {
+    res.status(400).json({ error: 'invalid triggerType' });
+    return;
+  }
+  if (!Array.isArray(actions)) {
+    res.status(400).json({ error: 'actions must be an array' });
+    return;
+  }
+  try {
+    const rule = createRule({ name, triggerType, triggerConfig, actions, enabled });
+    res.status(201).json(rule);
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+api.get('/rules', auth.requireRole('analyst'), (_req, res) => {
+  const enabledOnly = _req.query.enabled === 'true';
+  try {
+    const rules = listRules(enabledOnly);
+    res.json({ rules });
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+api.get('/rules/:id', auth.requireRole('analyst'), (req, res) => {
+  try {
+    const rule = getRule(req.params.id);
+    if (!rule) {
+      res.status(404).json({ error: 'rule not found' });
+      return;
+    }
+    res.json(rule);
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+api.patch('/rules/:id', auth.requireRole('admin'), audit('update_rule'), (req, res) => {
+  const { enabled } = req.body || {};
+  if (enabled === undefined) {
+    res.status(400).json({ error: 'missing field: enabled' });
+    return;
+  }
+  try {
+    const updated = updateRule(req.params.id, { enabled });
+    if (!updated) {
+      res.status(404).json({ error: 'rule not found' });
+      return;
+    }
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+api.get('/rules/:id/executions', auth.requireRole('analyst'), (req, res) => {
+  const limit = req.query.limit ? Number(req.query.limit) : 50;
+  try {
+    const executions = getRuleExecutionHistory(req.params.id, Number.isFinite(limit) ? limit : 50);
+    res.json({ executions });
   } catch (err) {
     res.status(500).json({ error: errorMessage(err) });
   }
