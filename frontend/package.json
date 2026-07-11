@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.{ts,tsx}\""
   },
@@ -29,7 +30,7 @@
     "@types/react-beautiful-dnd": "^13.1.8",
     "@types/react-dom": "^18.3.5",
     "@types/react-simple-maps": "^3.0.6",
-    "@vitejs/plugin-react": "^6.0.2",
+    "@vitejs/plugin-react": "6.0.2",
     "autoprefixer": "^10.4.20",
     "eslint": "^9.17.0",
     "eslint-plugin-react-hooks": "^5.1.0",
@@ -39,6 +40,7 @@
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.1",
-    "vite": "^8.0.16"
+    "vite": "8.0.16",
+    "vitest": "4.1.8"
   }
 }

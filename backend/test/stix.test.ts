@@ -71,9 +71,25 @@ describe('buildStixBundle', () => {
     expect(ipIndicator?.confidence).toBe(72);
     expect(ipIndicator?.x_threat_intel_source_reliability).toBe('A');
     expect(ipIndicator?.x_threat_intel_tlp).toBe('clear');
+    const clearMarking = bundle.objects.find(
+      (object) => object.id === 'marking-definition--94868c89-83c2-464b-929b-a1a8aa3c8487',
+    );
+    expect(clearMarking).toMatchObject({
+      type: 'marking-definition',
+      definition_type: 'tlp',
+      definition: { tlp: 'clear' },
+    });
+    expect(ipIndicator?.object_marking_refs).toEqual([clearMarking?.id]);
 
     const vuln = bundle.objects.find((o) => o.type === 'vulnerability');
     expect(vuln?.external_references).toEqual([{ source_name: 'cve', external_id: 'CVE-2025-0001' }]);
+
+    const feodoIdentity = bundle.objects.find((o) => o.type === 'identity' && o.name === 'feodo');
+    const feodoReport = bundle.objects.find((o) => o.type === 'report' && o.name === 'feodo normalized threat intelligence');
+    expect(feodoIdentity?.id).toMatch(/^identity--/);
+    expect(feodoReport).toMatchObject({ created_by_ref: feodoIdentity?.id, report_types: ['threat-report'] });
+    expect(feodoReport?.object_refs).toContain(ipIndicator?.id);
+    expect(feodoReport?.object_marking_refs).toContain(clearMarking?.id);
   });
 
   it('represents cve-type indicators as vulnerabilities and dedups against the CVE list', () => {

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { recordRuleExecution } from '../persist.js';
 import { listRules } from './index.js';
-import type { Rule, ThreatIndicator } from '../types.js';
+import type { IndicatorType, Rule, ThreatIndicator } from '../types.js';
 
 export interface RuleEvaluationResult {
   matched: boolean;
@@ -18,7 +18,7 @@ export function evaluateRule(rule: Rule, indicator: ThreatIndicator): boolean {
     case 'threshold':
       return evaluateThreshold(indicator, triggerConfig);
     case 'schedule':
-      return false;
+      throw new Error('schedule trigger is not implemented');
     default:
       return false;
   }
@@ -67,7 +67,7 @@ export async function executeActions(
   indicator: ThreatIndicator,
   actionHandlers: {
     webhook?: (url: string, payload: unknown) => Promise<void>;
-    enrich?: (iocValue: string) => Promise<void>;
+    enrich?: (iocValue: string, indicatorType: IndicatorType) => Promise<void>;
   },
 ): Promise<{ success: boolean; errors: string[] }> {
   const errors: string[] = [];
@@ -75,7 +75,8 @@ export async function executeActions(
 
   for (const action of rule.actions) {
     try {
-      if (action.type === 'webhook' && actionHandlers.webhook) {
+      if (action.type === 'webhook') {
+        if (!actionHandlers.webhook) throw new Error('webhook handler is not configured');
         const url = action.config.url as string;
         if (!url) {
           errors.push('webhook action missing url config');
@@ -94,8 +95,11 @@ export async function executeActions(
           },
           timestamp: new Date().toISOString(),
         });
-      } else if (action.type === 'enrich' && actionHandlers.enrich) {
-        await actionHandlers.enrich(indicator.indicator);
+      } else if (action.type === 'enrich') {
+        if (!actionHandlers.enrich) throw new Error('enrichment handler is not configured');
+        await actionHandlers.enrich(indicator.indicator, indicator.indicatorType);
+      } else {
+        throw new Error(`${action.type} action is not implemented`);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -121,7 +125,7 @@ export async function evaluateAllRules(
   indicators: ThreatIndicator[],
   actionHandlers: {
     webhook?: (url: string, payload: unknown) => Promise<void>;
-    enrich?: (iocValue: string) => Promise<void>;
+    enrich?: (iocValue: string, indicatorType: IndicatorType) => Promise<void>;
   },
 ): Promise<RuleEvaluationResult[]> {
   const enabledRules = listRules(true);

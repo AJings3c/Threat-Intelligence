@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Search, Database, Download, AlertCircle } from 'lucide-react';
 import type { Language, ThreatIndicator } from '../types';
+import { apiJson } from '../api';
 
 interface HuntResult {
   ioc: string;
@@ -15,6 +16,7 @@ interface HuntResponse {
   totalMatches: number;
   queryTime: number;
 }
+interface HuntHistory { id: string; query: string; resultsCount: number; initiatedBy: string; createdAt: number }
 
 const HUNT_TEXT = {
   en: {
@@ -38,6 +40,7 @@ const HUNT_TEXT = {
     exportCSV: 'Export CSV',
     exportJSON: 'Export JSON',
     cleared: 'Results cleared',
+    history: 'Hunt History', loadHistory: 'Load History', noHistory: 'No saved hunt history', queryTime: 'Query time', historical: 'Historical store', yes: 'Yes', no: 'No',
   },
   zh: {
     title: '威胁狩猎',
@@ -60,6 +63,7 @@ const HUNT_TEXT = {
     exportCSV: '导出 CSV',
     exportJSON: '导出 JSON',
     cleared: '结果已清空',
+    history: '狩猎历史', loadHistory: '加载历史', noHistory: '暂无狩猎历史', queryTime: '查询耗时', historical: '历史库', yes: '是', no: '否',
   },
 };
 
@@ -69,6 +73,8 @@ export function HuntWorkspace({ lang }: { lang: Language }) {
   const [hunting, setHunting] = useState(false);
   const [results, setResults] = useState<HuntResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<HuntHistory[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const t = HUNT_TEXT[lang];
 
@@ -88,7 +94,7 @@ export function HuntWorkspace({ lang }: { lang: Language }) {
       const now = Date.now();
       const start = timeRange === 0 ? 0 : now - timeRange * 24 * 60 * 60 * 1000;
 
-      const response = await fetch('/api/hunt/batch', {
+      const data = await apiJson<HuntResponse>('/api/hunt/batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -97,9 +103,6 @@ export function HuntWorkspace({ lang }: { lang: Language }) {
         }),
       });
 
-      if (!response.ok) throw new Error(`Hunt failed: ${response.status}`);
-
-      const data = (await response.json()) as HuntResponse;
       setResults(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Hunt failed');
@@ -122,7 +125,7 @@ export function HuntWorkspace({ lang }: { lang: Language }) {
       ]);
     }
 
-    const csv = rows.map((row) => row.join(',')).join('\n');
+    const csv = rows.map((row) => row.map((value) => `"${value.replace(/"/g, '""')}"`).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -130,6 +133,13 @@ export function HuntWorkspace({ lang }: { lang: Language }) {
     a.download = `hunt-results-${Date.now()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const loadHistory = async () => {
+    setHistoryLoading(true); setError(null);
+    try { const data = await apiJson<{ history: HuntHistory[] }>('/api/hunt/history?limit=20'); setHistory(data.history); }
+    catch (err) { setError(err instanceof Error ? err.message : 'Failed to load hunt history'); }
+    finally { setHistoryLoading(false); }
   };
 
   const exportJSON = () => {
@@ -231,6 +241,7 @@ export function HuntWorkspace({ lang }: { lang: Language }) {
               </button>
             </div>
           </div>
+          <div className="mb-4 flex flex-wrap gap-4 text-xs text-slate-400"><span>{t.queryTime}: {results.queryTime}ms</span></div>
 
           {results.results.length === 0 ? (
             <div className="py-8 text-center text-sm text-slate-400">{t.noResults}</div>
@@ -268,6 +279,11 @@ export function HuntWorkspace({ lang }: { lang: Language }) {
           )}
         </div>
       )}
+
+      <section className="surface rounded-lg p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-lg font-bold text-slate-50">{t.history}</h3><button type="button" onClick={() => void loadHistory()} disabled={historyLoading} className="control min-h-11 px-4 text-sm font-semibold disabled:opacity-50">{historyLoading ? t.hunting : t.loadHistory}</button></div>
+        <div className="mt-3 space-y-2">{history.length ? history.map((item) => <details key={item.id} className="surface-raised rounded-lg p-3"><summary className="break-words text-sm font-semibold text-slate-200">{new Date(item.createdAt).toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US')} · {item.resultsCount} {t.matches}</summary><pre className="mt-2 whitespace-pre-wrap break-all text-xs text-slate-400">{item.query}</pre><p className="mt-2 break-all text-xs text-slate-500">{item.initiatedBy}</p></details>) : <p className="text-sm text-slate-400">{t.noHistory}</p>}</div>
+      </section>
     </div>
   );
 }

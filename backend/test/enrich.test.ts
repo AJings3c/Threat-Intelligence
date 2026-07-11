@@ -18,6 +18,10 @@ afterEach(() => {
   delete process.env.CENSYS_API_ID;
   delete process.env.CENSYS_API_SECRET;
   delete process.env.CENSYS_API_BASE;
+  delete process.env.GREYNOISE_API_KEY;
+  delete process.env.GREYNOISE_API_BASE;
+  delete process.env.URLSCAN_API_KEY;
+  delete process.env.URLSCAN_API_BASE;
 });
 
 describe('parseIndicatorType', () => {

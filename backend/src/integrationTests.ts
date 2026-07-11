@@ -6,7 +6,15 @@ import type {
   ThreatIndicator,
   ThreatSource,
 } from './types.js';
-import { enrichCensys, enrichShodan, enrichVirusTotal, isProviderConfigured, providerRequiredEnv } from './enrich.js';
+import {
+  enrichCensys,
+  enrichGreyNoise,
+  enrichShodan,
+  enrichURLScan,
+  enrichVirusTotal,
+  isProviderConfigured,
+  providerRequiredEnv,
+} from './enrich.js';
 import { SOURCE_LABELS } from './store.js';
 import { isSourceConfigured, sourceRequiredEnv } from './sourceProfiles.js';
 import { fetchCisaKev } from './sources/cisaKev.js';
@@ -24,6 +32,7 @@ import { fetchPhishTank } from './sources/phishtank.js';
 import { fetchAbuseIpDb } from './sources/abuseipdb.js';
 import { fetchOtx } from './sources/otx.js';
 import { fetchTaxiiImport } from './sources/taxiiImport.js';
+import { fetchMisp } from './sources/misp.js';
 import { errorMessage } from './util.js';
 
 type SourceFetcher = () => Promise<FetchResult<ThreatIndicator> | FetchResult<unknown>>;
@@ -44,6 +53,7 @@ const SOURCE_TESTERS: Record<ThreatSource, SourceFetcher> = {
   abuseipdb: () => fetchAbuseIpDb(20),
   otx: () => fetchOtx(20),
   taxii_import: () => fetchTaxiiImport(20),
+  misp: () => fetchMisp(20),
 };
 
 function resultBase(
@@ -108,15 +118,20 @@ export async function testEnrichmentProvider(provider: EnrichmentProvider): Prom
     };
   }
 
-  const sampleIndicator = provider === 'virustotal' ? 'example.com' : '1.1.1.1';
-  const sampleType = provider === 'virustotal' ? 'domain' : 'ip';
+  const sampleIndicator =
+    provider === 'virustotal' ? 'example.com' : provider === 'urlscan' ? 'https://example.com' : '1.1.1.1';
+  const sampleType = provider === 'virustotal' ? 'domain' : provider === 'urlscan' ? 'url' : 'ip';
   try {
     const result =
       provider === 'virustotal'
         ? await enrichVirusTotal(sampleIndicator, sampleType)
         : provider === 'shodan'
           ? await enrichShodan(sampleIndicator, sampleType)
-          : await enrichCensys(sampleIndicator, sampleType);
+          : provider === 'censys'
+            ? await enrichCensys(sampleIndicator, sampleType)
+            : provider === 'greynoise'
+              ? await enrichGreyNoise(sampleIndicator, sampleType)
+              : await enrichURLScan(sampleIndicator, sampleType);
     if (!result) return { ...base, status: 'unsupported', message: 'Provider is not available for the sample type' };
     if (!result.ok) return { ...base, status: 'failed', message: result.error ?? 'Connection failed' };
     return { ...base, status: 'ok', message: 'Connection succeeded', sampleCount: 1 };

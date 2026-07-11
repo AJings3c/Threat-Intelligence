@@ -18,6 +18,7 @@ const HEATMAP_TEXT = {
     density: 'Density',
     threats: 'threats',
     noData: 'No geographic data available',
+    countries: 'countries', topLocations: 'Top Threat Locations', averageSeverity: 'average severity',
   },
   zh: {
     title: '地理威胁热力图',
@@ -30,6 +31,7 @@ const HEATMAP_TEXT = {
     density: '密度',
     threats: '威胁',
     noData: '无地理数据',
+    countries: '个国家/地区', topLocations: '主要威胁位置', averageSeverity: '平均严重度',
   },
 };
 
@@ -139,16 +141,17 @@ export function ThreatHeatmap({ lang, indicators }: { lang: Language; indicators
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="text-sm text-slate-400">
-          {geoIndicators.length} {t.threats} · {countryCounts.size} countries
+          {geoIndicators.length} {t.threats} · {countryCounts.size} {t.countries}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <div className="flex rounded-lg border border-line/60 bg-slate-800/50">
             <button
               type="button"
               onClick={() => setLayerMode('points')}
-              className={`inline-flex items-center gap-2 px-3 py-1.5 text-xs transition-colors ${
+              aria-pressed={layerMode === 'points'}
+              className={`inline-flex min-h-11 items-center gap-2 px-3 text-xs transition-colors ${
                 layerMode === 'points' ? 'bg-teal-300/15 text-teal-100' : 'text-slate-400 hover:text-slate-300'
               }`}
             >
@@ -158,7 +161,8 @@ export function ThreatHeatmap({ lang, indicators }: { lang: Language; indicators
             <button
               type="button"
               onClick={() => setLayerMode('heatmap')}
-              className={`inline-flex items-center gap-2 px-3 py-1.5 text-xs transition-colors ${
+              aria-pressed={layerMode === 'heatmap'}
+              className={`inline-flex min-h-11 items-center gap-2 px-3 text-xs transition-colors ${
                 layerMode === 'heatmap' ? 'bg-teal-300/15 text-teal-100' : 'text-slate-400 hover:text-slate-300'
               }`}
             >
@@ -169,7 +173,7 @@ export function ThreatHeatmap({ lang, indicators }: { lang: Language; indicators
           <button
             type="button"
             onClick={toggleFullscreen}
-            className="control inline-flex items-center gap-2 px-3 py-1.5 text-xs"
+            className="control inline-flex min-h-11 items-center gap-2 px-3 text-xs"
           >
             {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
             {isFullscreen ? t.exitFullscreen : t.fullscreen}
@@ -217,7 +221,7 @@ export function ThreatHeatmap({ lang, indicators }: { lang: Language; indicators
             heatmapCells.map((cell, idx) => (
               <Marker key={`cell-${idx}`} coordinates={[cell.lon, cell.lat]}>
                 <circle r={cell.radius} fill={cell.color} fillOpacity={0.5} stroke="none">
-                  <title>{`${cell.count} threats (avg severity: ${cell.severity.toFixed(1)})`}</title>
+                  <title>{`${cell.count} ${t.threats} (${t.averageSeverity}: ${cell.severity.toFixed(1)})`}</title>
                 </circle>
               </Marker>
             ))}
@@ -225,7 +229,7 @@ export function ThreatHeatmap({ lang, indicators }: { lang: Language; indicators
       </div>
 
       <div className="surface-raised rounded-lg p-3">
-        <div className="mb-2 text-xs font-semibold text-slate-300">Top Threat Locations</div>
+        <div className="mb-2 text-xs font-semibold text-slate-300">{t.topLocations}</div>
         <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
           {Array.from(countryCounts.entries())
             .sort((a, b) => b[1] - a[1])

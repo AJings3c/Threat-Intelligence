@@ -38,10 +38,6 @@ function timeAgo(iso: string | undefined, lang: Language): string {
   return lang === 'zh' ? `${days} 天前` : `${days}d ago`;
 }
 
-function compact(value: string, max = 72): string {
-  return value.length > max ? `${value.slice(0, max - 14)}...${value.slice(-10)}` : value;
-}
-
 function DetailRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded border border-line/60 bg-panel-2/70 px-3 py-2">
@@ -128,7 +124,7 @@ export function ThreatTable({
                         <SeverityBadge severity={threat.severity} lang={lang} />
                       </td>
                       <td className="max-w-[360px] px-4 py-3">
-                        <div className="truncate font-mono text-[13px] text-sky-300" title={threat.indicator}>
+                        <div className="break-all font-mono text-[13px] text-sky-300">
                           {threat.reference ? (
                             <a href={threat.reference} target="_blank" rel="noreferrer" className="hover:underline" onClick={(event) => event.stopPropagation()}>
                               {threat.indicator}
@@ -137,7 +133,7 @@ export function ThreatTable({
                             <span>{threat.indicator}</span>
                           )}
                         </div>
-                        {threat.title && <div className="truncate text-xs text-slate-400">{threat.title}</div>}
+                        {threat.title && <div className="break-words text-xs leading-5 text-slate-400">{threat.title}</div>}
                       </td>
                       <td className="px-4 py-3 text-slate-300">{THREAT_TYPE_LABEL[lang][threat.type]}</td>
                       <td className="px-4 py-3 text-slate-300">
@@ -187,8 +183,8 @@ export function ThreatTable({
                   {THREAT_TYPE_LABEL[lang][selectedThreat.type]}
                 </span>
               </div>
-              <div className="break-words font-mono text-sm font-semibold leading-6 text-sky-200">
-                {compact(selectedThreat.indicator, 120)}
+              <div className="break-all font-mono text-sm font-semibold leading-6 text-sky-200">
+                {selectedThreat.indicator}
               </div>
               {selectedThreat.title && <p className="text-sm leading-6 text-slate-300">{selectedThreat.title}</p>}
               {selectedThreat.description && <p className="text-xs leading-5 text-slate-500">{selectedThreat.description}</p>}
@@ -230,7 +226,7 @@ export function ThreatTable({
                   className="primary-action control inline-flex w-full items-center justify-center gap-2 px-4 text-sm font-bold"
                 >
                   <ExternalLink className="h-4 w-4" aria-hidden="true" />
-                  <span className="truncate">{copy.reference}</span>
+                  <span className="break-words">{copy.reference}</span>
                 </a>
               )}
             </div>

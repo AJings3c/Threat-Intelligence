@@ -1,6 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { Plus, Save, Trash2, Power, AlertCircle, Zap, Webhook, Database } from 'lucide-react';
-import type { Language, Severity, RuleTriggerType, RuleActionType } from '../types';
+import type { Language, Severity, RuleTriggerType, RuleActionType, RuleExecution } from '../types';
+import { apiJson } from '../api';
 
 interface Rule {
   id: string;
@@ -27,7 +28,6 @@ const RULE_TEXT = {
     triggerType: 'Trigger Type',
     iocMatch: 'IOC Match',
     threshold: 'Threshold',
-    schedule: 'Schedule',
     triggerConfig: 'Trigger Configuration',
     severity: 'Severity',
     minConfidence: 'Min Confidence',
@@ -36,10 +36,7 @@ const RULE_TEXT = {
     addAction: 'Add Action',
     webhook: 'Webhook',
     enrich: 'Auto-Enrich',
-    ticket: 'Create Ticket',
-    block: 'Block IOC',
     webhookUrl: 'Webhook URL',
-    ticketSystem: 'Ticket System',
     save: 'Save Rule',
     saving: 'Saving...',
     cancel: 'Cancel',
@@ -51,6 +48,8 @@ const RULE_TEXT = {
     viewHistory: 'View History',
     lastTriggered: 'Last Triggered',
     never: 'Never',
+    hideHistory: 'Hide History', noExecutions: 'No executions recorded', succeeded: 'Succeeded', failed: 'Failed', anySeverity: 'Any severity',
+    loading: 'Loading…',
   },
   zh: {
     title: '规则与自动化',
@@ -61,7 +60,6 @@ const RULE_TEXT = {
     triggerType: '触发类型',
     iocMatch: 'IOC 匹配',
     threshold: '阈值',
-    schedule: '定时',
     triggerConfig: '触发配置',
     severity: '严重性',
     minConfidence: '最低置信度',
@@ -70,10 +68,7 @@ const RULE_TEXT = {
     addAction: '添加动作',
     webhook: 'Webhook',
     enrich: '自动富化',
-    ticket: '创建工单',
-    block: '阻断 IOC',
     webhookUrl: 'Webhook URL',
-    ticketSystem: '工单系统',
     save: '保存规则',
     saving: '保存中...',
     cancel: '取消',
@@ -85,6 +80,8 @@ const RULE_TEXT = {
     viewHistory: '查看历史',
     lastTriggered: '最近触发',
     never: '从未',
+    hideHistory: '收起历史', noExecutions: '暂无执行记录', succeeded: '成功', failed: '失败', anySeverity: '任意严重性',
+    loading: '加载中…',
   },
 };
 
@@ -93,6 +90,9 @@ export function RuleEditor({ lang }: { lang: Language }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [historyRuleId, setHistoryRuleId] = useState<string | null>(null);
+  const [executions, setExecutions] = useState<Record<string, RuleExecution[]>>({});
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const [formName, setFormName] = useState('');
   const [formTriggerType, setFormTriggerType] = useState<RuleTriggerType>('ioc_match');
@@ -105,9 +105,7 @@ export function RuleEditor({ lang }: { lang: Language }) {
 
   const loadRules = async () => {
     try {
-      const response = await fetch('/api/rules');
-      if (!response.ok) throw new Error(`Failed to load rules: ${response.status}`);
-      const data = (await response.json()) as { rules: Rule[] };
+      const data = await apiJson<{ rules: Rule[] }>('/api/rules');
       setRules(data.rules);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load rules');
@@ -129,7 +127,7 @@ export function RuleEditor({ lang }: { lang: Language }) {
       if (formMinConfidence) triggerConfig.minConfidence = Number(formMinConfidence);
       if (formTags) triggerConfig.tags = formTags.split(',').map((t) => t.trim());
 
-      const response = await fetch('/api/rules', {
+      await apiJson<Rule>('/api/rules', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -140,8 +138,6 @@ export function RuleEditor({ lang }: { lang: Language }) {
           enabled: true,
         }),
       });
-
-      if (!response.ok) throw new Error(`Failed to create rule: ${response.status}`);
 
       await loadRules();
       setEditing(false);
@@ -159,24 +155,33 @@ export function RuleEditor({ lang }: { lang: Language }) {
 
   const toggleRule = async (ruleId: string, enabled: boolean) => {
     try {
-      const response = await fetch(`/api/rules/${ruleId}`, {
+      await apiJson<Rule>(`/api/rules/${ruleId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled }),
       });
 
-      if (!response.ok) throw new Error(`Failed to update rule: ${response.status}`);
       await loadRules();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to toggle rule');
     }
   };
 
+  const toggleHistory = async (ruleId: string) => {
+    if (historyRuleId === ruleId) { setHistoryRuleId(null); return; }
+    setHistoryRuleId(ruleId);
+    if (executions[ruleId]) return;
+    setHistoryLoading(true); setError(null);
+    try {
+      const data = await apiJson<{ executions: RuleExecution[] }>(`/api/rules/${ruleId}/executions`);
+      setExecutions((current) => ({ ...current, [ruleId]: data.executions }));
+    } catch (err) { setError(err instanceof Error ? err.message : 'Failed to load execution history'); }
+    finally { setHistoryLoading(false); }
+  };
+
   const addAction = (type: RuleActionType) => {
     const config: Record<string, unknown> = {};
     if (type === 'webhook') config.url = '';
-    if (type === 'ticket') config.system = 'jira';
-
     setFormActions([...formActions, { type, config }]);
   };
 
@@ -233,8 +238,8 @@ export function RuleEditor({ lang }: { lang: Language }) {
 
           <div className="mb-4">
             <label className="mb-2 block text-sm font-semibold text-slate-300">{t.triggerType}</label>
-            <div className="grid grid-cols-3 gap-2">
-              {(['ioc_match', 'threshold', 'schedule'] as RuleTriggerType[]).map((type) => (
+            <div className="grid grid-cols-2 gap-2">
+              {(['ioc_match', 'threshold'] as RuleTriggerType[]).map((type) => (
                 <button
                   key={type}
                   type="button"
@@ -243,7 +248,7 @@ export function RuleEditor({ lang }: { lang: Language }) {
                     formTriggerType === type ? 'bg-teal-300/15 text-teal-100' : 'text-slate-300'
                   }`}
                 >
-                  {type === 'ioc_match' ? t.iocMatch : type === 'threshold' ? t.threshold : t.schedule}
+                  {type === 'ioc_match' ? t.iocMatch : t.threshold}
                 </button>
               ))}
             </div>
@@ -258,11 +263,11 @@ export function RuleEditor({ lang }: { lang: Language }) {
                   onChange={(e) => setFormSeverity(e.target.value as Severity | '')}
                   className="control w-full text-sm"
                 >
-                  <option value="">Any</option>
-                  <option value="critical">Critical</option>
-                  <option value="high">High</option>
-                  <option value="medium">Medium</option>
-                  <option value="low">Low</option>
+                  <option value="">{t.anySeverity}</option>
+                  <option value="critical">{lang === 'zh' ? '严重' : 'Critical'}</option>
+                  <option value="high">{lang === 'zh' ? '高' : 'High'}</option>
+                  <option value="medium">{lang === 'zh' ? '中' : 'Medium'}</option>
+                  <option value="low">{lang === 'zh' ? '低' : 'Low'}</option>
                 </select>
               </div>
               <div>
@@ -335,7 +340,8 @@ export function RuleEditor({ lang }: { lang: Language }) {
                     <button
                       type="button"
                       onClick={() => removeAction(index)}
-                      className="text-red-300 hover:text-red-100"
+                      aria-label={`${t.delete} ${action.type}`}
+                      className="control flex h-11 w-11 items-center justify-center text-red-300 hover:text-red-100"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
@@ -372,7 +378,7 @@ export function RuleEditor({ lang }: { lang: Language }) {
           <div className="space-y-3">
             {rules.map((rule) => (
               <div key={rule.id} className="surface-raised rounded-lg p-3">
-                <div className="flex items-start justify-between">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="flex-1">
                     <div className="mb-1 flex items-center gap-2">
                       <Zap className="h-4 w-4 text-teal-200" />
@@ -382,11 +388,12 @@ export function RuleEditor({ lang }: { lang: Language }) {
                       {rule.triggerType} • {rule.actions.length} {t.actions}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={() => toggleRule(rule.id, !rule.enabled)}
-                      className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-semibold ${
+                      aria-pressed={rule.enabled}
+                      className={`inline-flex min-h-11 items-center gap-1.5 rounded px-3 text-xs font-semibold ${
                         rule.enabled
                           ? 'bg-emerald-300/15 text-emerald-100'
                           : 'bg-slate-500/15 text-slate-400'
@@ -395,8 +402,10 @@ export function RuleEditor({ lang }: { lang: Language }) {
                       <Power className="h-3 w-3" />
                       {rule.enabled ? t.enabled : t.disabled}
                     </button>
+                    <button type="button" onClick={() => void toggleHistory(rule.id)} aria-expanded={historyRuleId === rule.id} className="control min-h-11 px-3 text-xs font-semibold">{historyRuleId === rule.id ? t.hideHistory : t.viewHistory}</button>
                   </div>
                 </div>
+                {historyRuleId === rule.id && <div className="mt-3 border-t border-line/60 pt-3" aria-live="polite">{historyLoading && !executions[rule.id] ? <p className="text-sm text-slate-400">{t.loading}</p> : (executions[rule.id]?.length ?? 0) === 0 ? <p className="text-sm text-slate-400">{t.noExecutions}</p> : <div className="space-y-2">{executions[rule.id].map((execution) => <div key={execution.id} className="rounded-lg bg-panel-2/70 p-3 text-xs"><div className="flex flex-wrap justify-between gap-2"><span className={execution.success ? 'text-emerald-300' : 'text-red-300'}>{execution.success ? t.succeeded : t.failed}</span><span className="text-slate-500">{new Date(execution.triggeredAt).toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US')}</span></div><pre className="mt-2 whitespace-pre-wrap break-all text-slate-300">{JSON.stringify(execution.actionsTaken, null, 2)}</pre></div>)}</div>}</div>}
               </div>
             ))}
           </div>

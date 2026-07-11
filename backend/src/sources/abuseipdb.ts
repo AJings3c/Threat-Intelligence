@@ -1,5 +1,5 @@
 import type { FetchResult, Severity, ThreatIndicator } from '../types.js';
-import { errorMessage, fetchWithTimeout } from '../util.js';
+import { errorMessage, fetchWithRetry } from '../util.js';
 
 const ABUSEIPDB_BLACKLIST_URL = 'https://api.abuseipdb.com/api/v2/blacklist';
 
@@ -91,7 +91,7 @@ export async function fetchAbuseIpDb(limit = 1000): Promise<FetchResult<ThreatIn
       limit: String(Math.min(limit, requestedLimit)),
       ipVersion: '4',
     });
-    const res = await fetchWithTimeout(
+    const res = await fetchWithRetry(
       `${apiBase}?${params.toString()}`,
       { headers: { Key: apiKey, Accept: 'application/json' } },
       45_000,

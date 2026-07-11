@@ -1,5 +1,5 @@
 import type { ThreatIndicator, FetchResult } from '../types.js';
-import { fetchWithTimeout, errorMessage } from '../util.js';
+import { fetchWithRetry, errorMessage } from '../util.js';
 
 const KEV_URL =
   'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json';
@@ -22,7 +22,7 @@ interface KevResponse {
 export async function fetchCisaKev(limit = 400): Promise<FetchResult<ThreatIndicator>> {
   const fetchedAt = Date.now();
   try {
-    const res = await fetchWithTimeout(KEV_URL);
+    const res = await fetchWithRetry(KEV_URL);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as KevResponse;
 

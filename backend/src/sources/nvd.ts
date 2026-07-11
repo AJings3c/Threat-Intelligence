@@ -1,5 +1,5 @@
 import type { CveItem, FetchResult } from '../types.js';
-import { fetchWithTimeout, errorMessage, cvssToSeverity } from '../util.js';
+import { fetchWithRetry, errorMessage, cvssToSeverity } from '../util.js';
 import { fetchEpssScores } from './epss.js';
 import { sourceProfile } from '../sourceProfiles.js';
 
@@ -59,7 +59,7 @@ export async function fetchNvd(limit = 60, days = 14): Promise<FetchResult<CveIt
     });
     // An NVD API key raises the rate limit from 5 to 50 requests / 30s.
     const apiKey = process.env.NVD_API_KEY?.trim();
-    const res = await fetchWithTimeout(
+    const res = await fetchWithRetry(
       `${NVD_URL}?${params.toString()}`,
       apiKey ? { headers: { apiKey } } : {},
       30_000,

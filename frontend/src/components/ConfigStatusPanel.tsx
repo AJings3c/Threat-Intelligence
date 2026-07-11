@@ -116,7 +116,7 @@ export function ConfigStatusPanel({
                     </span>
                   )}
                 </div>
-                <div className="mt-1 truncate text-xs text-slate-500">
+                <div className="mt-1 break-words text-xs leading-5 text-slate-500">
                   {source.lastError ??
                     (source.requiredEnv.length > 0 ? source.requiredEnv.join(', ') : t.publicFeed)}
                 </div>
@@ -138,7 +138,7 @@ export function ConfigStatusPanel({
                 type="button"
                 onClick={() => onTestIntegration('source', source.source)}
                 disabled={integrationLoading === `source:${source.source}`}
-                className="soft-action min-h-10 rounded px-3 text-xs font-semibold disabled:opacity-60"
+                className="soft-action min-h-11 rounded px-3 text-xs font-semibold disabled:opacity-60"
               >
                 {integrationLoading === `source:${source.source}` ? t.testing : t.test}
               </button>
@@ -169,7 +169,7 @@ export function ConfigStatusPanel({
                       type="button"
                       onClick={() => onTestIntegration('provider', provider.provider)}
                       disabled={integrationLoading === `provider:${provider.provider}`}
-                      className="soft-action min-h-10 rounded px-3 text-xs font-semibold disabled:opacity-60"
+                      className="soft-action min-h-11 rounded px-3 text-xs font-semibold disabled:opacity-60"
                     >
                       {integrationLoading === `provider:${provider.provider}` ? t.testing : t.test}
                     </button>

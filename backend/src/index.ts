@@ -1,13 +1,25 @@
 import express from 'express';
 import cors from 'cors';
 import compression from 'compression';
+import helmet from 'helmet';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { store } from './store.js';
 import { notifier } from './notify/index.js';
-import { errorMessage, extractToken } from './util.js';
-import { initPersistence, getTrend, isPersistEnabled, getSourceHealthHistory } from './persist.js';
+import { errorMessage } from './util.js';
+import {
+  closePersistence,
+  getBackgroundJobs,
+  getBackgroundJobCounts,
+  getDetectionArtifacts,
+  getSourceHealthHistory,
+  getTrend,
+  initPersistence,
+  isPersistEnabled,
+  loadIntelSnapshot,
+  loadStixObjects,
+} from './persist.js';
 import { getAuditEvents } from './persist.js';
 import { buildStixBundle } from './stix.js';
 import {
@@ -25,13 +37,35 @@ import { enrichWithCache, startCacheCleanupTask } from './enrichCache.js';
 import { testIntegration } from './integrationTests.js';
 import { investigationMarkdown, architectureThreatModelMarkdown } from './reports.js';
 import { buildArchitectureThreatModel } from './architectureThreatModel.js';
-import { apiAuth, audit, corsOptions, rateLimit } from './security.js';
-import type { EnrichmentProvider, IntegrationKind, ThreatSource } from './types.js';
+import {
+  apiAuth,
+  audit,
+  corsOptions,
+  isApiAuthConfigured,
+  isUnauthenticatedAccessAllowed,
+  rateLimit,
+  resolveRequestIdentity,
+} from './security.js';
+import type {
+  ApiRole,
+  CaseStatus,
+  DetectionArtifactFormat,
+  EnrichmentProvider,
+  IntegrationKind,
+  ThreatSource,
+} from './types.js';
 import { parseLanguage } from './language.js';
 import { createCase, updateCase, getCase, listCases, addIocToCase, addComment } from './cases.js';
 import { batchHunt, getHuntHistory } from './hunt.js';
 import { createRule, updateRule, getRule, listRules, getRuleExecutionHistory } from './rules/index.js';
 import { markAsFalsePositive, listFalsePositives, getQualityDistribution, getQualityTrend } from './quality.js';
+import { setupAutoTrigger } from './rules/autoTrigger.js';
+import { DurableJobWorker, enqueueDurableJob } from './jobs.js';
+import { exportIntegrityHeaders } from './exportIntegrity.js';
+import { prometheusMetrics } from './metrics.js';
+import { filterStixObjectsForRole } from './stixAccess.js';
+import { queryStixObjects, stixNeighborhood } from './stixGraph.js';
+import { extractIocs } from './iocExtract.js';
 
 
 const PORT = Number(process.env.PORT ?? 4000);
@@ -51,23 +85,37 @@ const THREAT_SOURCES: ThreatSource[] = [
   'phishtank',
   'abuseipdb',
   'otx',
+  'misp',
   'taxii_import',
 ];
-const ENRICHMENT_PROVIDERS: EnrichmentProvider[] = ['virustotal', 'shodan', 'censys'];
+const ENRICHMENT_PROVIDERS: EnrichmentProvider[] = ['virustotal', 'shodan', 'censys', 'greynoise', 'urlscan'];
+const CASE_STATUSES: CaseStatus[] = ['open', 'investigating', 'resolved', 'closed'];
 
 // Optional API auth. When API_TOKEN is set, all /api routes (except /health) require it.
 // A static token suits machine/SIEM access or a private deployment; a browser SPA cannot
 // keep it truly secret, so for public dashboards put a real auth proxy in front.
 const API_TOKEN = process.env.API_TOKEN?.trim() || null;
-const tokenOf = (req: express.Request): string =>
-  extractToken(
-    typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined,
-    typeof req.headers['x-api-token'] === 'string' ? req.headers['x-api-token'] : undefined,
-    typeof req.query.token === 'string' ? req.query.token : undefined,
-  );
 
 const app = express();
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        connectSrc: ["'self'"],
+        imgSrc: ["'self'", 'data:', 'blob:'],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'"],
+      },
+    },
+  }),
+);
 app.use(cors(corsOptions()));
+
+let server: ReturnType<typeof app.listen> | null = null;
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
+let backgroundWorker: DurableJobWorker | null = null;
+let stopCacheCleanup: (() => void) | null = null;
 
 function taxiiBaseUrl(req: express.Request): string {
   return `${req.protocol}://${req.get('host') ?? `localhost:${PORT}`}`;
@@ -77,9 +125,38 @@ function setTaxiiHeaders(res: express.Response): void {
   res.setHeader('Content-Type', TAXII_MEDIA_TYPE);
 }
 
+function sendIntegrityProtected(
+  res: express.Response,
+  payload: unknown,
+  contentType = 'application/json; charset=utf-8',
+): void {
+  const body = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  res.setHeader('Content-Type', contentType);
+  for (const [name, value] of Object.entries(exportIntegrityHeaders(body))) res.setHeader(name, value);
+  res.send(body);
+}
+
+function sendTaxii(res: express.Response, payload: unknown): void {
+  sendIntegrityProtected(res, payload, TAXII_MEDIA_TYPE);
+}
+
 function guardTaxii(req: express.Request, res: express.Response): boolean {
-  if (!API_TOKEN || tokenOf(req) === API_TOKEN) return true;
+  const identity = resolveRequestIdentity(req, API_TOKEN);
+  if (identity) {
+    res.locals.role = identity.role;
+    res.locals.principal = identity.principal;
+    return true;
+  }
+  if (isUnauthenticatedAccessAllowed(API_TOKEN)) {
+    res.locals.role = 'admin';
+    res.locals.principal = 'local-development-admin';
+    return true;
+  }
   setTaxiiHeaders(res);
+  if (!isApiAuthConfigured(API_TOKEN)) {
+    res.status(503).json({ title: 'Unavailable', description: 'server authentication is not configured' });
+    return false;
+  }
   res.status(401).json({
     title: 'Unauthorized',
     description: 'invalid or missing API token',
@@ -88,8 +165,23 @@ function guardTaxii(req: express.Request, res: express.Response): boolean {
   return false;
 }
 
-function stixObjects() {
-  return buildStixBundle(store.getIndicators(), store.getAllCves()).objects;
+function stixBundle(role: ApiRole) {
+  const bundle = buildStixBundle(store.getIndicators(), store.getAllCves());
+  const byVersion = new Map(
+    bundle.objects.map((object) => [`${object.id}:${object.modified ?? object.created ?? 'unversioned'}`, object]),
+  );
+  for (const object of loadStixObjects()) {
+    if (object.spec_version !== undefined && object.spec_version !== '2.1') continue;
+    byVersion.set(`${object.id}:${object.modified ?? object.created ?? 'unversioned'}`, {
+      ...object,
+      spec_version: '2.1',
+    });
+  }
+  return { ...bundle, objects: filterStixObjectsForRole(Array.from(byVersion.values()), role) };
+}
+
+function stixObjects(role: ApiRole) {
+  return stixBundle(role).objects;
 }
 
 function taxiiPageOptions(req: express.Request) {
@@ -104,7 +196,11 @@ function taxiiPageOptions(req: express.Request) {
 // Server-Sent Events stream for live updates. Registered BEFORE compression so the
 // long-lived response is not buffered. Emits a `refresh` event after each feed refresh.
 app.get('/api/stream', (req, res) => {
-  if (API_TOKEN && tokenOf(req) !== API_TOKEN) {
+  if (!resolveRequestIdentity(req, API_TOKEN) && !isUnauthenticatedAccessAllowed(API_TOKEN)) {
+    if (!isApiAuthConfigured(API_TOKEN)) {
+      res.status(503).json({ error: 'server authentication is not configured' });
+      return;
+    }
     res.status(401).json({ error: 'unauthorized: invalid or missing API token' });
     return;
   }
@@ -138,20 +234,17 @@ app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? '1mb' }));
 
 app.get(['/taxii2', '/taxii2/'], (req, res) => {
   if (!guardTaxii(req, res)) return;
-  setTaxiiHeaders(res);
-  res.json(buildTaxiiDiscovery(taxiiBaseUrl(req)));
+  sendTaxii(res, buildTaxiiDiscovery(taxiiBaseUrl(req)));
 });
 
 app.get('/taxii2/root/', (req, res) => {
   if (!guardTaxii(req, res)) return;
-  setTaxiiHeaders(res);
-  res.json(buildTaxiiApiRoot());
+  sendTaxii(res, buildTaxiiApiRoot());
 });
 
 app.get('/taxii2/root/collections/', (req, res) => {
   if (!guardTaxii(req, res)) return;
-  setTaxiiHeaders(res);
-  res.json(buildTaxiiCollections());
+  sendTaxii(res, buildTaxiiCollections());
 });
 
 app.get('/taxii2/root/collections/:id/', (req, res) => {
@@ -161,7 +254,7 @@ app.get('/taxii2/root/collections/:id/', (req, res) => {
     res.status(404).json({ title: 'Not found', description: 'collection not found' });
     return;
   }
-  res.json(taxiiCollection());
+  sendTaxii(res, taxiiCollection());
 });
 
 app.get('/taxii2/root/collections/:id/objects/', (req, res) => {
@@ -171,7 +264,7 @@ app.get('/taxii2/root/collections/:id/objects/', (req, res) => {
     res.status(404).json({ title: 'Not found', description: 'collection not found' });
     return;
   }
-  res.json(buildTaxiiEnvelope(stixObjects(), taxiiPageOptions(req)));
+  sendTaxii(res, buildTaxiiEnvelope(stixObjects(res.locals.role as ApiRole), taxiiPageOptions(req)));
 });
 
 app.get('/taxii2/root/collections/:id/manifest/', (req, res) => {
@@ -181,11 +274,18 @@ app.get('/taxii2/root/collections/:id/manifest/', (req, res) => {
     res.status(404).json({ title: 'Not found', description: 'collection not found' });
     return;
   }
-  res.json(buildTaxiiManifest(stixObjects(), taxiiPageOptions(req)));
+  sendTaxii(res, buildTaxiiManifest(stixObjects(res.locals.role as ApiRole), taxiiPageOptions(req)));
 });
 
 const api = express.Router();
 const auth = apiAuth(API_TOKEN);
+const requirePersistence: express.RequestHandler = (_req, res, next) => {
+  if (isPersistEnabled()) {
+    next();
+    return;
+  }
+  res.status(503).json({ error: 'persistence required: configure DATA_DIR and restart the service' });
+};
 api.use(auth.attachRole);
 api.use(rateLimit());
 
@@ -198,6 +298,21 @@ api.get('/health', (_req, res) => {
     lastRefresh: store.lastRefreshAt ? new Date(store.lastRefreshAt).toISOString() : null,
     sources: store.getHealth(),
   });
+});
+
+api.get('/metrics', auth.requireRole('viewer'), (_req, res) => {
+  const stats = store.getStats();
+  res.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+  res.send(
+    prometheusMetrics({
+      totalIndicators: stats.totalIndicators,
+      totalCves: stats.totalCves,
+      lastRefreshAt: store.lastRefreshAt,
+      health: store.getHealth(),
+      persistenceEnabled: isPersistEnabled(),
+      jobs: getBackgroundJobCounts(),
+    }),
+  );
 });
 
 api.get('/threats', (req, res) => {
@@ -239,6 +354,22 @@ api.get('/enrich', auth.requireRole('analyst'), audit('enrich'), (req, res) => {
     .catch((err) => res.status(500).json({ error: errorMessage(err) }));
 });
 
+api.get('/enrich/aggregate/:indicator', auth.requireRole('analyst'), audit('enrich_aggregate'), (req, res) => {
+  const indicator = req.params.indicator?.trim();
+  const indicatorType = parseIndicatorType(typeof req.query.type === 'string' ? req.query.type : undefined);
+  if (!indicator || !indicatorType) {
+    res.status(400).json({ error: 'missing or invalid indicator/type' });
+    return;
+  }
+  enrichWithCache(indicator, indicatorType)
+    .then((result) => res.json(result))
+    .catch((err) => res.status(500).json({ error: errorMessage(err) }));
+});
+
+api.get('/enrich/providers', (_req, res) => {
+  res.json({ providers: enrichmentConfigStatus() });
+});
+
 api.get('/investigate', auth.requireRole('analyst'), audit('investigate'), (req, res) => {
   const indicator = typeof req.query.indicator === 'string' ? req.query.indicator.trim() : '';
   const indicatorType = parseIndicatorType(typeof req.query.type === 'string' ? req.query.type : undefined);
@@ -276,7 +407,7 @@ api.get('/investigate/report', auth.requireRole('analyst'), audit('investigation
     return;
   }
   res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-  res.send(investigationMarkdown(result, language));
+  sendIntegrityProtected(res, investigationMarkdown(result, language), 'text/markdown; charset=utf-8');
 });
 
 api.get('/stats', (_req, res) => {
@@ -320,12 +451,7 @@ api.get('/threat-model', auth.requireRole('analyst'), audit('architecture_threat
     .filter(([, configured]) => configured)
     .map(([channel]) => channel);
   const model = buildArchitectureThreatModel(store.getStats(), store.getHealth(), language, {
-    authConfigured: Boolean(
-      API_TOKEN ||
-        process.env.API_VIEWER_TOKENS?.trim() ||
-        process.env.API_ANALYST_TOKENS?.trim() ||
-        process.env.API_ADMIN_TOKENS?.trim(),
-    ),
+    authConfigured: isApiAuthConfigured(API_TOKEN),
     persistenceEnabled: isPersistEnabled(),
     notifyEnabled: notifyStatus.enabled,
     configuredNotifyChannels,
@@ -334,8 +460,7 @@ api.get('/threat-model', auth.requireRole('analyst'), audit('architecture_threat
     jsonBodyLimit: process.env.JSON_BODY_LIMIT ?? '1mb',
   });
   if (req.query.format === 'markdown') {
-    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-    res.send(architectureThreatModelMarkdown(model, language));
+    sendIntegrityProtected(res, architectureThreatModelMarkdown(model, language), 'text/markdown; charset=utf-8');
     return;
   }
   res.json(model);
@@ -366,25 +491,109 @@ api.get('/audit', auth.requireRole('admin'), (_req, res) => {
   res.json({ enabled: isPersistEnabled(), events: getAuditEvents(Number.isFinite(limit) ? limit : 100) });
 });
 
+api.get('/jobs', auth.requireRole('admin'), requirePersistence, (req, res) => {
+  const limit = req.query.limit ? Number(req.query.limit) : 100;
+  res.json({ jobs: getBackgroundJobs(Number.isFinite(limit) ? limit : 100) });
+});
+
+api.get('/detection-artifacts', auth.requireRole('analyst'), requirePersistence, (req, res) => {
+  const requestedFormat = typeof req.query.format === 'string' ? req.query.format : undefined;
+  const format =
+    requestedFormat === 'sigma' || requestedFormat === 'yara' || requestedFormat === 'snort'
+      ? (requestedFormat as DetectionArtifactFormat)
+      : undefined;
+  if (requestedFormat && !format) {
+    res.status(400).json({ error: 'format must be sigma, yara, or snort' });
+    return;
+  }
+  const requestedLimit = req.query.limit ? Number(req.query.limit) : 100;
+  const limit = Number.isFinite(requestedLimit) ? requestedLimit : 100;
+  const artifacts = getDetectionArtifacts(format, limit);
+  res.json({ artifacts, total: artifacts.length, executable: false });
+});
+
+api.get('/stix/objects', auth.requireRole('analyst'), audit('stix_object_query'), (req, res) => {
+  const type = typeof req.query.type === 'string' ? req.query.type.trim() : undefined;
+  const id = typeof req.query.id === 'string' ? req.query.id.trim() : undefined;
+  if (type && !/^[a-z0-9-]{1,64}$/.test(type)) {
+    res.status(400).json({ error: 'invalid STIX object type' });
+    return;
+  }
+  if (id && (id.length > 200 || !id.includes('--'))) {
+    res.status(400).json({ error: 'invalid STIX object id' });
+    return;
+  }
+  res.json(
+    queryStixObjects(stixObjects(res.locals.role as ApiRole), {
+      type,
+      id,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+      offset: req.query.offset ? Number(req.query.offset) : undefined,
+    }),
+  );
+});
+
+api.get('/stix/graph/:id', auth.requireRole('analyst'), audit('stix_graph_query'), (req, res) => {
+  const id = req.params.id.trim();
+  if (id.length > 200 || !id.includes('--')) {
+    res.status(400).json({ error: 'invalid STIX object id' });
+    return;
+  }
+  const depth = req.query.depth ? Number(req.query.depth) : 1;
+  const normalizedDepth = Math.min(3, Math.max(0, Math.floor(Number.isFinite(depth) ? depth : 1)));
+  const objects = stixNeighborhood(
+    stixObjects(res.locals.role as ApiRole),
+    id,
+    normalizedDepth,
+  );
+  if (!objects.some((object) => object.id === id)) {
+    res.status(404).json({ error: 'STIX object not found or not permitted by TLP policy' });
+    return;
+  }
+  res.json({ rootId: id, depth: normalizedDepth, objects });
+});
+
+api.post('/extract-iocs', auth.requireRole('analyst'), audit('ioc_text_extract'), (req, res) => {
+  const text = typeof req.body?.text === 'string' ? req.body.text : '';
+  if (!text) {
+    res.status(400).json({ error: 'text is required' });
+    return;
+  }
+  if (text.length > 200_000) {
+    res.status(413).json({ error: 'text exceeds the 200000 character extraction limit' });
+    return;
+  }
+  const requestedLimit = Number(req.body?.limit ?? 1000);
+  const limit = Number.isFinite(requestedLimit) ? Math.min(2000, Math.max(1, Math.floor(requestedLimit))) : 1000;
+  const iocs = extractIocs(text, limit);
+  const localKeys = new Set(
+    store.getIndicators().map((indicator) => `${indicator.indicatorType}:${indicator.indicator.toLowerCase()}`),
+  );
+  res.json({
+    iocs: iocs.map((ioc) => ({
+      ...ioc,
+      localMatch: localKeys.has(`${ioc.indicatorType}:${ioc.value.toLowerCase()}`),
+    })),
+    total: iocs.length,
+  });
+});
+
 // STIX 2.1 bundle export for sharing with MISP / OpenCTI / SIEMs.
 api.get('/export/stix', (_req, res) => {
-  const bundle = buildStixBundle(store.getIndicators(), store.getAllCves());
   res.setHeader('Content-Disposition', 'attachment; filename="threat-intel-stix.json"');
-  res.json(bundle);
+  sendIntegrityProtected(res, stixBundle(res.locals.role as ApiRole), 'application/stix+json;version=2.1');
 });
 
 // Manually trigger a digest push to all configured channels (DingTalk / Telegram).
 // Guarded: this endpoint sends real messages, so it must not be open to the world.
-// - If NOTIFY_TEST_TOKEN is set, the caller must supply it (x-notify-token header or ?token=).
+// - If NOTIFY_TEST_TOKEN is set, the caller must supply it in x-notify-token.
 // - If it is not set, the route is allowed only outside production.
 const NOTIFY_TEST_TOKEN = process.env.NOTIFY_TEST_TOKEN?.trim() || null;
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 api.post('/notify/test', auth.requireRole('admin'), audit('notify_test'), (req, res) => {
   if (NOTIFY_TEST_TOKEN) {
-    const provided =
-      (typeof req.headers['x-notify-token'] === 'string' ? req.headers['x-notify-token'] : '') ||
-      (typeof req.query.token === 'string' ? req.query.token : '');
+    const provided = typeof req.headers['x-notify-token'] === 'string' ? req.headers['x-notify-token'] : '';
     if (provided !== NOTIFY_TEST_TOKEN) {
       res.status(401).json({ error: 'unauthorized: invalid or missing notify test token' });
       return;
@@ -401,7 +610,7 @@ api.post('/notify/test', auth.requireRole('admin'), audit('notify_test'), (req, 
 
 // Phase 1: Platform Upgrade - Cases Management API
 
-api.post('/cases', auth.requireRole('analyst'), audit('create_case'), (req, res) => {
+api.post('/cases', auth.requireRole('analyst'), requirePersistence, audit('create_case'), (req, res) => {
   const { title, severity, assignee } = req.body || {};
   if (!title || !severity) {
     res.status(400).json({ error: 'missing required fields: title, severity' });
@@ -419,18 +628,21 @@ api.post('/cases', auth.requireRole('analyst'), audit('create_case'), (req, res)
   }
 });
 
-api.get('/cases', auth.requireRole('analyst'), (_req, res) => {
-  const status = typeof _req.query.status === 'string' ? _req.query.status : undefined;
+api.get('/cases', auth.requireRole('analyst'), requirePersistence, (_req, res) => {
+  const status =
+    typeof _req.query.status === 'string' && CASE_STATUSES.includes(_req.query.status as CaseStatus)
+      ? (_req.query.status as CaseStatus)
+      : undefined;
   const assignee = typeof _req.query.assignee === 'string' ? _req.query.assignee : undefined;
   try {
-    const cases = listCases({ status: status as any, assignee });
+    const cases = listCases({ status, assignee });
     res.json({ cases });
   } catch (err) {
     res.status(500).json({ error: errorMessage(err) });
   }
 });
 
-api.get('/cases/:id', auth.requireRole('analyst'), (req, res) => {
+api.get('/cases/:id', auth.requireRole('analyst'), requirePersistence, (req, res) => {
   try {
     const caseData = getCase(req.params.id);
     if (!caseData) {
@@ -443,7 +655,7 @@ api.get('/cases/:id', auth.requireRole('analyst'), (req, res) => {
   }
 });
 
-api.patch('/cases/:id', auth.requireRole('analyst'), audit('update_case'), (req, res) => {
+api.patch('/cases/:id', auth.requireRole('analyst'), requirePersistence, audit('update_case'), (req, res) => {
   const { status, assignee } = req.body || {};
   try {
     const updated = updateCase(req.params.id, { status, assignee });
@@ -457,7 +669,7 @@ api.patch('/cases/:id', auth.requireRole('analyst'), audit('update_case'), (req,
   }
 });
 
-api.post('/cases/:id/iocs', auth.requireRole('analyst'), audit('add_case_ioc'), (req, res) => {
+api.post('/cases/:id/iocs', auth.requireRole('analyst'), requirePersistence, audit('add_case_ioc'), (req, res) => {
   const { iocId } = req.body || {};
   if (!iocId) {
     res.status(400).json({ error: 'missing required field: iocId' });
@@ -475,14 +687,17 @@ api.post('/cases/:id/iocs', auth.requireRole('analyst'), audit('add_case_ioc'), 
   }
 });
 
-api.post('/cases/:id/comments', auth.requireRole('analyst'), audit('add_case_comment'), (req, res) => {
-  const { author, content } = req.body || {};
-  if (!author || !content) {
-    res.status(400).json({ error: 'missing required fields: author, content' });
+api.post('/cases/:id/comments', auth.requireRole('analyst'), requirePersistence, audit('add_case_comment'), (req, res) => {
+  const { content } = req.body || {};
+  if (!content) {
+    res.status(400).json({ error: 'missing required field: content' });
     return;
   }
   try {
-    const comment = addComment(req.params.id, { author, content });
+    const comment = addComment(req.params.id, {
+      author: (res.locals.principal as string | null) ?? 'anonymous',
+      content,
+    });
     if (!comment) {
       res.status(404).json({ error: 'case not found' });
       return;
@@ -496,9 +711,14 @@ api.post('/cases/:id/comments', auth.requireRole('analyst'), audit('add_case_com
 // Phase 1: Platform Upgrade - Threat Hunting API
 
 api.post('/hunt/batch', auth.requireRole('analyst'), audit('hunt_batch'), (req, res) => {
+  const startedAt = Date.now();
   const { iocs, timeRange, sources } = req.body || {};
   if (!iocs || !Array.isArray(iocs) || iocs.length === 0) {
     res.status(400).json({ error: 'missing or invalid field: iocs (must be non-empty array)' });
+    return;
+  }
+  if (iocs.length > 500 || iocs.some((ioc) => typeof ioc !== 'string' || ioc.trim().length === 0 || ioc.length > 2048)) {
+    res.status(400).json({ error: 'iocs must contain 1-500 non-empty strings of at most 2048 characters' });
     return;
   }
   if (!timeRange || typeof timeRange.start !== 'number' || typeof timeRange.end !== 'number') {
@@ -506,18 +726,24 @@ api.post('/hunt/batch', auth.requireRole('analyst'), audit('hunt_batch'), (req, 
     return;
   }
   try {
+    const searchableIndicators = isPersistEnabled() ? loadIntelSnapshot(false).indicators : store.getIndicators();
     const result = batchHunt(
       { iocs, timeRange, sources },
-      store.getIndicators(),
-      req.headers['x-user-id'] as string || 'unknown',
+      searchableIndicators,
+      (res.locals.principal as string | null) ?? 'anonymous',
     );
-    res.json(result);
+    res.json({
+      ...result,
+      totalMatches: result.results.reduce((total, item) => total + item.matches.length, 0),
+      queryTime: Date.now() - startedAt,
+      historical: isPersistEnabled(),
+    });
   } catch (err) {
     res.status(500).json({ error: errorMessage(err) });
   }
 });
 
-api.get('/hunt/history', auth.requireRole('analyst'), (_req, res) => {
+api.get('/hunt/history', auth.requireRole('analyst'), requirePersistence, (_req, res) => {
   const limit = _req.query.limit ? Number(_req.query.limit) : 50;
   try {
     const history = getHuntHistory(Number.isFinite(limit) ? limit : 50);
@@ -529,18 +755,26 @@ api.get('/hunt/history', auth.requireRole('analyst'), (_req, res) => {
 
 // Phase 1: Platform Upgrade - Rules Engine API
 
-api.post('/rules', auth.requireRole('admin'), audit('create_rule'), (req, res) => {
+api.post('/rules', auth.requireRole('admin'), requirePersistence, audit('create_rule'), (req, res) => {
   const { name, triggerType, triggerConfig, actions, enabled } = req.body || {};
   if (!name || !triggerType || !triggerConfig || !actions) {
     res.status(400).json({ error: 'missing required fields: name, triggerType, triggerConfig, actions' });
     return;
   }
-  if (!['ioc_match', 'threshold', 'schedule'].includes(triggerType)) {
-    res.status(400).json({ error: 'invalid triggerType' });
+  if (!['ioc_match', 'threshold'].includes(triggerType)) {
+    res.status(400).json({ error: 'unsupported triggerType: supported values are ioc_match and threshold' });
     return;
   }
   if (!Array.isArray(actions)) {
     res.status(400).json({ error: 'actions must be an array' });
+    return;
+  }
+  if (actions.length === 0 || actions.some((action) => !action || !['webhook', 'enrich'].includes(action.type))) {
+    res.status(400).json({ error: 'actions must contain only implemented webhook or enrich actions' });
+    return;
+  }
+  if (actions.some((action) => action.type === 'webhook' && typeof action.config?.url !== 'string')) {
+    res.status(400).json({ error: 'webhook actions require config.url' });
     return;
   }
   try {
@@ -551,7 +785,7 @@ api.post('/rules', auth.requireRole('admin'), audit('create_rule'), (req, res) =
   }
 });
 
-api.get('/rules', auth.requireRole('analyst'), (_req, res) => {
+api.get('/rules', auth.requireRole('analyst'), requirePersistence, (_req, res) => {
   const enabledOnly = _req.query.enabled === 'true';
   try {
     const rules = listRules(enabledOnly);
@@ -561,7 +795,7 @@ api.get('/rules', auth.requireRole('analyst'), (_req, res) => {
   }
 });
 
-api.get('/rules/:id', auth.requireRole('analyst'), (req, res) => {
+api.get('/rules/:id', auth.requireRole('analyst'), requirePersistence, (req, res) => {
   try {
     const rule = getRule(req.params.id);
     if (!rule) {
@@ -574,7 +808,7 @@ api.get('/rules/:id', auth.requireRole('analyst'), (req, res) => {
   }
 });
 
-api.patch('/rules/:id', auth.requireRole('admin'), audit('update_rule'), (req, res) => {
+api.patch('/rules/:id', auth.requireRole('admin'), requirePersistence, audit('update_rule'), (req, res) => {
   const { enabled } = req.body || {};
   if (enabled === undefined) {
     res.status(400).json({ error: 'missing field: enabled' });
@@ -592,7 +826,7 @@ api.patch('/rules/:id', auth.requireRole('admin'), audit('update_rule'), (req, r
   }
 });
 
-api.get('/rules/:id/executions', auth.requireRole('analyst'), (req, res) => {
+api.get('/rules/:id/executions', auth.requireRole('analyst'), requirePersistence, (req, res) => {
   const limit = req.query.limit ? Number(req.query.limit) : 50;
   try {
     const executions = getRuleExecutionHistory(req.params.id, Number.isFinite(limit) ? limit : 50);
@@ -625,21 +859,21 @@ api.get('/quality/trend', auth.requireRole('analyst'), (req, res) => {
   }
 });
 
-api.post('/quality/false-positive', auth.requireRole('analyst'), audit('mark_false_positive'), (req, res) => {
-  const { iocValue, markedBy, reason } = req.body || {};
-  if (!iocValue || !markedBy) {
-    res.status(400).json({ error: 'missing required fields: iocValue, markedBy' });
+api.post('/quality/false-positive', auth.requireRole('analyst'), requirePersistence, audit('mark_false_positive'), (req, res) => {
+  const { iocValue, reason } = req.body || {};
+  if (!iocValue) {
+    res.status(400).json({ error: 'missing required field: iocValue' });
     return;
   }
   try {
-    markAsFalsePositive(iocValue, markedBy, reason);
+    markAsFalsePositive(iocValue, (res.locals.principal as string | null) ?? 'anonymous', reason);
     res.json({ success: true, iocValue });
   } catch (err) {
     res.status(500).json({ error: errorMessage(err) });
   }
 });
 
-api.get('/quality/false-positives', auth.requireRole('analyst'), (_req, res) => {
+api.get('/quality/false-positives', auth.requireRole('analyst'), requirePersistence, (_req, res) => {
   try {
     const falsePositives = listFalsePositives();
     res.json({ falsePositives });
@@ -676,8 +910,9 @@ async function bootstrap(): Promise<void> {
   // Open persistence first (no-op unless DATA_DIR is set) so the first refresh can
   // hydrate the geo cache and record first/last-seen.
   initPersistence();
+  store.hydrateFromPersistence();
 
-  app.listen(PORT, () => {
+  server = app.listen(PORT, () => {
     console.log(`[server] threat-intel-platform API listening on :${PORT}`);
   });
 
@@ -700,17 +935,46 @@ async function bootstrap(): Promise<void> {
   notifier.start();
 
   // Start enrichment cache cleanup task (runs every hour).
-  startCacheCleanupTask();
+  stopCacheCleanup = startCacheCleanupTask();
 
-  setInterval(() => {
-    store
-      .refresh()
-      .then(() => {
-        console.log('[server] feeds refreshed');
-        return notifier.checkSourceHealth(store.getHealth());
-      })
-      .catch((err) => console.error(`[server] refresh failed: ${errorMessage(err)}`));
-  }, REFRESH_INTERVAL_MS);
+  // Setup automatic rule triggering on new indicators.
+  setupAutoTrigger(store);
+  console.log('[server] rule auto-trigger enabled');
+
+  const refreshFeeds = async (): Promise<void> => {
+    await store.refresh();
+    console.log('[server] feeds refreshed');
+    await notifier.checkSourceHealth(store.getHealth());
+  };
+  if (isPersistEnabled()) {
+    backgroundWorker = new DurableJobWorker({ feed_refresh: async () => refreshFeeds() });
+    backgroundWorker.start();
+    refreshTimer = setInterval(() => {
+      enqueueDurableJob('feed_refresh', {}, { dedupeKey: 'scheduled-feed-refresh', maxAttempts: 5 });
+    }, REFRESH_INTERVAL_MS);
+  } else {
+    refreshTimer = setInterval(() => {
+      refreshFeeds().catch((err) => console.error(`[server] refresh failed: ${errorMessage(err)}`));
+    }, REFRESH_INTERVAL_MS);
+  }
 }
 
 void bootstrap();
+
+function shutdown(signal: string): void {
+  console.log(`[server] ${signal} received; stopping background work`);
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = null;
+  backgroundWorker?.stop();
+  stopCacheCleanup?.();
+  notifier.stop();
+  const finish = () => {
+    closePersistence();
+    process.exitCode = 0;
+  };
+  if (server) server.close(finish);
+  else finish();
+}
+
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));

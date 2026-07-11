@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { BarChart3, TrendingUp, AlertTriangle, CheckCircle } from 'lucide-react';
 import type { Language } from '../types';
+import { apiJson } from '../api';
 
 interface QualityDistribution {
   excellent: number;
@@ -44,6 +45,7 @@ const QUALITY_TEXT = {
     markedAt: 'Marked At',
     noFalsePositives: 'No false positives marked',
     loading: 'Loading...',
+    noTrend: 'No trend data available', markFalsePositive: 'Mark False Positive', iocPlaceholder: 'IOC value', reasonPlaceholder: 'Reason (optional)', mark: 'Mark', marking: 'Marking…', retry: 'Retry',
   },
   zh: {
     title: '情报质量',
@@ -64,6 +66,7 @@ const QUALITY_TEXT = {
     markedAt: '标记时间',
     noFalsePositives: '无假阳性标记',
     loading: '加载中...',
+    noTrend: '暂无趋势数据', markFalsePositive: '标记假阳性', iocPlaceholder: 'IOC 值', reasonPlaceholder: '原因（可选）', mark: '标记', marking: '标记中…', retry: '重试',
   },
 };
 
@@ -80,42 +83,45 @@ export function QualityDashboard({ lang }: { lang: Language }) {
   const [trend, setTrend] = useState<QualityTrendPoint[]>([]);
   const [falsePositives, setFalsePositives] = useState<FalsePositive[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [iocValue, setIocValue] = useState('');
+  const [reason, setReason] = useState('');
+  const [marking, setMarking] = useState(false);
 
   const t = QUALITY_TEXT[lang];
 
-  useEffect(() => {
-    const loadData = async () => {
+  const loadData = async () => {
       setLoading(true);
+      setError(null);
       try {
-        const [distResponse, trendResponse, fpResponse] = await Promise.all([
-          fetch('/api/quality/distribution'),
-          fetch('/api/quality/trend?days=30'),
-          fetch('/api/quality/false-positives'),
+        const [distData, trendData, fpData] = await Promise.all([
+          apiJson<QualityDistribution>('/api/quality/distribution'),
+          apiJson<{ trend: QualityTrendPoint[] }>('/api/quality/trend?days=30'),
+          apiJson<{ falsePositives: FalsePositive[] }>('/api/quality/false-positives'),
         ]);
-
-        if (distResponse.ok) {
-          const distData = (await distResponse.json()) as QualityDistribution;
-          setDistribution(distData);
-        }
-
-        if (trendResponse.ok) {
-          const trendData = (await trendResponse.json()) as { trend: QualityTrendPoint[] };
-          setTrend(trendData.trend);
-        }
-
-        if (fpResponse.ok) {
-          const fpData = (await fpResponse.json()) as { falsePositives: FalsePositive[] };
-          setFalsePositives(fpData.falsePositives);
-        }
-      } catch {
-        // Non-blocking errors for quality dashboard
+        setDistribution(distData);
+        setTrend(trendData.trend);
+        setFalsePositives(fpData.falsePositives);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load quality data');
       } finally {
         setLoading(false);
       }
-    };
+  };
 
+  useEffect(() => {
     void loadData();
   }, []);
+
+  const markFalsePositive = async () => {
+    if (!iocValue.trim()) return;
+    setMarking(true); setError(null);
+    try {
+      await apiJson('/api/quality/false-positive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ iocValue: iocValue.trim(), reason: reason.trim() || undefined }) });
+      setIocValue(''); setReason(''); await loadData();
+    } catch (err) { setError(err instanceof Error ? err.message : 'Failed to mark false positive'); }
+    finally { setMarking(false); }
+  };
 
   if (loading) {
     return (
@@ -130,6 +136,7 @@ export function QualityDashboard({ lang }: { lang: Language }) {
 
   return (
     <div className="space-y-5">
+      {error && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-400/45 bg-red-500/10 px-4 py-3 text-sm text-red-200"><span className="break-words">{error}</span><button type="button" onClick={() => void loadData()} className="control min-h-11 px-3 text-xs">{t.retry}</button></div>}
       <div className="surface rounded-lg p-4">
         <div className="mb-4 flex items-center gap-2">
           <BarChart3 className="h-4 w-4 text-teal-200" />
@@ -208,7 +215,7 @@ export function QualityDashboard({ lang }: { lang: Language }) {
             </div>
           </div>
         ) : (
-          <div className="py-8 text-center text-sm text-slate-400">No trend data available</div>
+          <div className="py-8 text-center text-sm text-slate-400">{t.noTrend}</div>
         )}
       </div>
 
@@ -221,6 +228,12 @@ export function QualityDashboard({ lang }: { lang: Language }) {
           </span>
         </div>
 
+        <div className="mb-4 grid gap-2 md:grid-cols-[1fr_1fr_auto]">
+          <label htmlFor="false-positive-ioc" className="sr-only">{t.iocPlaceholder}</label><input id="false-positive-ioc" value={iocValue} onChange={(e) => setIocValue(e.target.value)} placeholder={t.iocPlaceholder} className="control min-w-0 px-3 text-sm" />
+          <label htmlFor="false-positive-reason" className="sr-only">{t.reasonPlaceholder}</label><input id="false-positive-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t.reasonPlaceholder} className="control min-w-0 px-3 text-sm" />
+          <button type="button" onClick={() => void markFalsePositive()} disabled={marking || !iocValue.trim()} className="primary-action control min-h-11 px-4 text-sm font-bold disabled:opacity-50">{marking ? t.marking : t.mark}</button>
+        </div>
+
         {falsePositives.length === 0 ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-slate-400">
             <CheckCircle className="h-4 w-4 text-emerald-300" />
@@ -230,13 +243,13 @@ export function QualityDashboard({ lang }: { lang: Language }) {
           <div className="space-y-2">
             {falsePositives.slice(0, 10).map((fp) => (
               <div key={fp.iocValue} className="surface-raised rounded-lg p-3">
-                <div className="mb-1 flex items-start justify-between">
-                  <code className="text-sm font-semibold text-red-200">{fp.iocValue}</code>
+                <div className="mb-1 flex flex-wrap items-start justify-between gap-2">
+                  <code className="break-all text-sm font-semibold text-red-200">{fp.iocValue}</code>
                   <span className="text-xs text-slate-500">
                     {new Date(fp.markedAt).toLocaleDateString()}
                   </span>
                 </div>
-                <div className="text-xs text-slate-400">
+                <div className="break-words text-xs text-slate-400">
                   {t.markedBy}: {fp.markedBy}
                   {fp.reason && ` • ${fp.reason}`}
                 </div>

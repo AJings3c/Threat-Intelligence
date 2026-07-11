@@ -1,4 +1,4 @@
-import { fetchWithTimeout } from '../util.js';
+import { fetchWithRetry } from '../util.js';
 
 const EPSS_URL = 'https://api.first.org/data/v1/epss';
 const CHUNK_SIZE = 80;
@@ -34,7 +34,7 @@ export async function fetchEpssScores(cves: string[]): Promise<Map<string, EpssS
 
   for (const batch of chunks(unique, CHUNK_SIZE)) {
     const params = new URLSearchParams({ cve: batch.join(',') });
-    const res = await fetchWithTimeout(`${EPSS_URL}?${params.toString()}`, {}, 20_000);
+    const res = await fetchWithRetry(`${EPSS_URL}?${params.toString()}`, {}, 20_000);
     if (!res.ok) throw new Error(`EPSS HTTP ${res.status}`);
     const data = (await res.json()) as EpssApiResponse;
     for (const item of data.data ?? []) {

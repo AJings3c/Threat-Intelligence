@@ -255,7 +255,7 @@ export function ArchitectureThreatModelPanel({
                 role="tab"
                 aria-selected={view === item}
                 onClick={() => setView(item)}
-                className={`min-h-10 rounded-md px-3 text-xs font-semibold transition ${
+                className={`min-h-11 rounded-md px-3 text-xs font-semibold transition ${
                   view === item ? 'bg-teal-300/15 text-teal-100' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
                 }`}
               >

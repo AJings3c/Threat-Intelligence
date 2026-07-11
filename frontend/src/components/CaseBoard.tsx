@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Plus, Folder, User, Calendar, MessageSquare, AlertCircle } from 'lucide-react';
+import { Plus, Folder, User, Calendar, MessageSquare, AlertCircle, ChevronDown } from 'lucide-react';
 import type { Language, Severity } from '../types';
+import { apiJson } from '../api';
 
 type CaseStatus = 'open' | 'investigating' | 'resolved' | 'closed';
 
@@ -49,6 +50,7 @@ const CASE_TEXT = {
     moveToResolved: 'Mark Resolved',
     moveToClosed: 'Close Case',
     reopen: 'Reopen',
+    details: 'Evidence & comments', addIoc: 'Add IOC ID', iocPlaceholder: 'Indicator ID or value', addComment: 'Add comment', commentPlaceholder: 'Record investigation context…', submit: 'Add', noComments: 'No comments yet', saving: 'Saving…',
   },
   zh: {
     title: '案例',
@@ -74,6 +76,7 @@ const CASE_TEXT = {
     moveToResolved: '标记为已解决',
     moveToClosed: '关闭案例',
     reopen: '重新打开',
+    details: '证据与评论', addIoc: '添加 IOC ID', iocPlaceholder: '指标 ID 或值', addComment: '添加评论', commentPlaceholder: '记录调查上下文…', submit: '添加', noComments: '暂无评论', saving: '保存中…',
   },
 };
 
@@ -100,15 +103,17 @@ export function CaseBoard({ lang }: { lang: Language }) {
   const [formTitle, setFormTitle] = useState('');
   const [formSeverity, setFormSeverity] = useState<Severity>('medium');
   const [formAssignee, setFormAssignee] = useState('');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [iocValue, setIocValue] = useState('');
+  const [commentValue, setCommentValue] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const t = CASE_TEXT[lang];
 
   const loadCases = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/cases');
-      if (!response.ok) throw new Error(`Failed to load cases: ${response.status}`);
-      const data = (await response.json()) as { cases: Case[] };
+      const data = await apiJson<{ cases: Case[] }>('/api/cases');
       setCases(data.cases);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load cases');
@@ -125,7 +130,7 @@ export function CaseBoard({ lang }: { lang: Language }) {
     if (!formTitle.trim()) return;
 
     try {
-      const response = await fetch('/api/cases', {
+      await apiJson<Case>('/api/cases', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -134,8 +139,6 @@ export function CaseBoard({ lang }: { lang: Language }) {
           assignee: formAssignee || undefined,
         }),
       });
-
-      if (!response.ok) throw new Error(`Failed to create case: ${response.status}`);
 
       await loadCases();
       setCreating(false);
@@ -149,17 +152,36 @@ export function CaseBoard({ lang }: { lang: Language }) {
 
   const updateCaseStatus = async (caseId: string, status: CaseStatus) => {
     try {
-      const response = await fetch(`/api/cases/${caseId}`, {
+      await apiJson<Case>(`/api/cases/${caseId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
 
-      if (!response.ok) throw new Error(`Failed to update case: ${response.status}`);
       await loadCases();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update case');
     }
+  };
+
+  const addIoc = async (caseId: string) => {
+    if (!iocValue.trim()) return;
+    setSaving(true); setError(null);
+    try {
+      await apiJson(`/api/cases/${caseId}/iocs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ iocId: iocValue.trim() }) });
+      setIocValue(''); await loadCases();
+    } catch (err) { setError(err instanceof Error ? err.message : 'Failed to add IOC'); }
+    finally { setSaving(false); }
+  };
+
+  const addComment = async (caseId: string) => {
+    if (!commentValue.trim()) return;
+    setSaving(true); setError(null);
+    try {
+      await apiJson(`/api/cases/${caseId}/comments`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: commentValue.trim() }) });
+      setCommentValue(''); await loadCases();
+    } catch (err) { setError(err instanceof Error ? err.message : 'Failed to add comment'); }
+    finally { setSaving(false); }
   };
 
   const casesByStatus = {
@@ -172,7 +194,7 @@ export function CaseBoard({ lang }: { lang: Language }) {
   if (loading) {
     return (
       <div className="py-12 text-center text-sm text-slate-400">
-        <div className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-teal-200 border-t-transparent" />
+        <div className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-teal-200 border-t-transparent" aria-hidden="true" />
       </div>
     );
   }
@@ -225,6 +247,7 @@ export function CaseBoard({ lang }: { lang: Language }) {
                   className={`control px-3 py-2 text-sm capitalize ${
                     formSeverity === sev ? SEVERITY_COLORS[sev] : 'text-slate-300'
                   }`}
+                  aria-pressed={formSeverity === sev}
                 >
                   {sev}
                 </button>
@@ -308,12 +331,12 @@ export function CaseBoard({ lang }: { lang: Language }) {
                       {new Date(caseItem.updatedAt).toLocaleDateString()}
                     </div>
 
-                    <div className="mt-2 flex gap-1">
+                    <div className="mt-3 flex flex-col gap-2">
                       {status === 'open' && (
                         <button
                           type="button"
                           onClick={() => updateCaseStatus(caseItem.id, 'investigating')}
-                          className="control w-full px-2 py-1 text-xs"
+                          className="control min-h-11 w-full px-2 text-xs"
                         >
                           {t.moveToInvestigating}
                         </button>
@@ -322,7 +345,7 @@ export function CaseBoard({ lang }: { lang: Language }) {
                         <button
                           type="button"
                           onClick={() => updateCaseStatus(caseItem.id, 'resolved')}
-                          className="control w-full px-2 py-1 text-xs"
+                          className="control min-h-11 w-full px-2 text-xs"
                         >
                           {t.moveToResolved}
                         </button>
@@ -331,7 +354,7 @@ export function CaseBoard({ lang }: { lang: Language }) {
                         <button
                           type="button"
                           onClick={() => updateCaseStatus(caseItem.id, 'closed')}
-                          className="control w-full px-2 py-1 text-xs"
+                          className="control min-h-11 w-full px-2 text-xs"
                         >
                           {t.moveToClosed}
                         </button>
@@ -340,12 +363,17 @@ export function CaseBoard({ lang }: { lang: Language }) {
                         <button
                           type="button"
                           onClick={() => updateCaseStatus(caseItem.id, 'open')}
-                          className="control w-full px-2 py-1 text-xs"
+                          className="control min-h-11 w-full px-2 text-xs"
                         >
                           {t.reopen}
                         </button>
                       )}
+                      <button type="button" onClick={() => setExpandedId(expandedId === caseItem.id ? null : caseItem.id)} aria-expanded={expandedId === caseItem.id} className="control flex min-h-11 w-full items-center justify-center gap-2 px-2 text-xs"><ChevronDown className={`h-4 w-4 transition-transform ${expandedId === caseItem.id ? 'rotate-180' : ''}`} aria-hidden="true" />{t.details}</button>
                     </div>
+                    {expandedId === caseItem.id && <div className="mt-3 space-y-3 border-t border-line/60 pt-3">
+                      <div>{caseItem.iocIds.length ? <div className="space-y-1">{caseItem.iocIds.map((ioc) => <code key={ioc} className="block break-all text-xs text-sky-300">{ioc}</code>)}</div> : <p className="text-xs text-slate-500">0 {t.iocs}</p>}<div className="mt-2 flex flex-col gap-2"><label htmlFor={`case-ioc-${caseItem.id}`} className="text-xs font-semibold text-slate-300">{t.addIoc}</label><input id={`case-ioc-${caseItem.id}`} value={iocValue} onChange={(e) => setIocValue(e.target.value)} placeholder={t.iocPlaceholder} className="control w-full px-3 text-xs" /><button type="button" disabled={saving || !iocValue.trim()} onClick={() => void addIoc(caseItem.id)} className="control min-h-11 px-3 text-xs disabled:opacity-50">{saving ? t.saving : t.submit}</button></div></div>
+                      <div><div className="space-y-2">{caseItem.comments.length ? caseItem.comments.map((comment) => <div key={comment.id} className="rounded-lg bg-panel-2/70 p-2"><p className="break-words text-xs text-slate-300">{comment.content}</p><p className="mt-1 text-[11px] text-slate-500">{comment.author} · {new Date(comment.createdAt).toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US')}</p></div>) : <p className="text-xs text-slate-500">{t.noComments}</p>}</div><div className="mt-2 flex flex-col gap-2"><label htmlFor={`case-comment-${caseItem.id}`} className="text-xs font-semibold text-slate-300">{t.addComment}</label><textarea id={`case-comment-${caseItem.id}`} value={commentValue} onChange={(e) => setCommentValue(e.target.value)} placeholder={t.commentPlaceholder} rows={3} className="control w-full resize-y p-2 text-xs" /><button type="button" disabled={saving || !commentValue.trim()} onClick={() => void addComment(caseItem.id)} className="control min-h-11 px-3 text-xs disabled:opacity-50">{saving ? t.saving : t.submit}</button></div></div>
+                    </div>}
                   </div>
                 ))
               )}

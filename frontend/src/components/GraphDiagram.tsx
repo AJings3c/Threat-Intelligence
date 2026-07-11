@@ -112,10 +112,6 @@ const GRAPH_TEXT: Record<Language, Record<string, string>> = {
   },
 };
 
-function compact(value: string, max = 74): string {
-  return value.length > max ? `${value.slice(0, max - 14)}...${value.slice(-10)}` : value;
-}
-
 function nodeAccent(node: GraphNode): string {
   if (node.severity) return SEVERITY_COLORS[node.severity];
   return KIND_STYLE[node.kind].accent;
@@ -124,10 +120,10 @@ function nodeAccent(node: GraphNode): string {
 function flowNodeLabel(node: GraphNode, lang: Language) {
   const style = KIND_STYLE[node.kind];
   return (
-    <div className="min-w-[190px] max-w-[220px] overflow-hidden rounded-lg">
+    <div className="min-w-[190px] max-w-[220px] rounded-lg">
       <div className="flex items-center gap-2">
         <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: nodeAccent(node) }} />
-        <span className="truncate text-[11px] font-semibold uppercase text-slate-400">{KIND_LABEL[lang][node.kind]}</span>
+        <span className="break-words text-[11px] font-semibold uppercase text-slate-400">{KIND_LABEL[lang][node.kind]}</span>
         {node.severity && (
           <span
             className="ml-auto rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase"
@@ -138,9 +134,9 @@ function flowNodeLabel(node: GraphNode, lang: Language) {
         )}
       </div>
       <div className="mt-2 break-words text-[12px] font-semibold leading-5" style={{ color: style.text }}>
-        {compact(node.label)}
+        {node.label}
       </div>
-      {node.subLabel && <div className="mt-1 break-words text-[11px] leading-4 text-slate-400">{compact(node.subLabel)}</div>}
+      {node.subLabel && <div className="mt-1 break-words text-[11px] leading-4 text-slate-400">{node.subLabel}</div>}
     </div>
   );
 }
@@ -237,7 +233,7 @@ export function GraphDiagram({
               role="tab"
               aria-selected={mode === item}
               onClick={() => setMode(item)}
-              className={`min-h-9 rounded-md px-3 text-xs font-semibold transition ${
+              className={`min-h-11 rounded-md px-3 text-xs font-semibold transition ${
                 mode === item ? 'bg-teal-300/15 text-teal-100' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
               }`}
             >

@@ -1,5 +1,5 @@
 import type { FetchResult, ThreatIndicator } from '../types.js';
-import { errorMessage, fetchWithTimeout } from '../util.js';
+import { errorMessage, fetchWithRetry } from '../util.js';
 import { clampLimit, headline, parseIsoTime, scoreSocialText } from './social.js';
 
 const DEFAULT_QUERY =
@@ -58,7 +58,7 @@ export async function fetchXRecentSearch(): Promise<FetchResult<ThreatIndicator>
       'user.fields': 'username,name',
     });
 
-    const res = await fetchWithTimeout(
+    const res = await fetchWithRetry(
       `${apiBase}/tweets/search/recent?${params.toString()}`,
       { headers: { Authorization: `Bearer ${bearerToken}` } },
       30_000,

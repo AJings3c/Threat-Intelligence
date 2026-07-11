@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { CorsOptions } from 'cors';
 import type { ApiRole, AuditEvent } from './types.js';
 import { recordAuditEvent } from './persist.js';
@@ -17,8 +18,39 @@ function tokenOf(req: Request): string {
   return extractToken(
     typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined,
     typeof req.headers['x-api-token'] === 'string' ? req.headers['x-api-token'] : undefined,
-    typeof req.query.token === 'string' ? req.query.token : undefined,
   );
+}
+
+function principalForToken(token: string): string {
+  if (!token) return 'local-development-admin';
+  return `token:${createHash('sha256').update(token).digest('hex').slice(0, 16)}`;
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+export interface RequestIdentity {
+  role: ApiRole;
+  principal: string;
+  mechanism: 'token' | 'trusted-proxy' | 'development-open';
+}
+
+function proxyAuthConfigured(): boolean {
+  return process.env.AUTH_PROXY_ENABLED === 'true' && Boolean(process.env.AUTH_PROXY_SHARED_SECRET?.trim());
+}
+
+function trustedProxyIdentity(req: Request): RequestIdentity | null {
+  if (!proxyAuthConfigured()) return null;
+  const expectedSecret = process.env.AUTH_PROXY_SHARED_SECRET?.trim() ?? '';
+  const suppliedSecret = typeof req.headers['x-auth-proxy-secret'] === 'string' ? req.headers['x-auth-proxy-secret'] : '';
+  if (!suppliedSecret || !safeEqual(suppliedSecret, expectedSecret)) return null;
+  const principal = typeof req.headers['x-auth-user'] === 'string' ? req.headers['x-auth-user'].trim() : '';
+  const role = typeof req.headers['x-auth-role'] === 'string' ? req.headers['x-auth-role'].trim() : '';
+  if (!principal || (role !== 'viewer' && role !== 'analyst' && role !== 'admin')) return null;
+  return { role, principal, mechanism: 'trusted-proxy' };
 }
 
 function roleMap(primaryToken: string | null): Map<string, ApiRole> {
@@ -30,22 +62,52 @@ function roleMap(primaryToken: string | null): Map<string, ApiRole> {
   return map;
 }
 
+export function resolveApiRole(token: string, primaryToken: string | null): ApiRole | null {
+  return roleMap(primaryToken).get(token) ?? null;
+}
+
+export function resolveRequestIdentity(req: Request, primaryToken: string | null): RequestIdentity | null {
+  const proxyIdentity = trustedProxyIdentity(req);
+  if (proxyIdentity) return proxyIdentity;
+  const token = tokenOf(req);
+  const role = resolveApiRole(token, primaryToken);
+  return role ? { role, principal: principalForToken(token), mechanism: 'token' } : null;
+}
+
+export function isApiAuthConfigured(primaryToken: string | null): boolean {
+  return roleMap(primaryToken).size > 0 || proxyAuthConfigured();
+}
+
+export function isUnauthenticatedAccessAllowed(primaryToken: string | null): boolean {
+  return !isApiAuthConfigured(primaryToken) &&
+    (process.env.NODE_ENV !== 'production' || process.env.ALLOW_INSECURE_NO_AUTH === 'true');
+}
+
 export function apiAuth(primaryToken: string | null): {
   attachRole: (req: Request, res: Response, next: NextFunction) => void;
   requireToken: (req: Request, res: Response, next: NextFunction) => void;
   requireRole: (role: ApiRole) => (req: Request, res: Response, next: NextFunction) => void;
 } {
-  const roles = roleMap(primaryToken);
-  const authEnabled = roles.size > 0;
+  const authConfigured = isApiAuthConfigured(primaryToken);
+  const allowUnauthenticated = isUnauthenticatedAccessAllowed(primaryToken);
   return {
     attachRole(req, res, next) {
-      const role = roles.get(tokenOf(req)) ?? (authEnabled ? null : 'admin');
-      res.locals.role = role;
+      const identity = resolveRequestIdentity(req, primaryToken) ??
+        (allowUnauthenticated
+          ? { role: 'admin' as const, principal: 'local-development-admin', mechanism: 'development-open' as const }
+          : null);
+      res.locals.role = identity?.role ?? null;
+      res.locals.principal = identity?.principal ?? null;
+      res.locals.authMechanism = identity?.mechanism ?? null;
       next();
     },
     requireToken(req, res, next) {
       if (req.path === '/health') {
         next();
+        return;
+      }
+      if (!authConfigured && !allowUnauthenticated) {
+        res.status(503).json({ error: 'server authentication is not configured' });
         return;
       }
       if (res.locals.role) {
@@ -69,7 +131,7 @@ export function apiAuth(primaryToken: string | null): {
 
 export function corsOptions(): CorsOptions {
   const origins = splitCsv(process.env.CORS_ORIGINS);
-  if (origins.length === 0) return {};
+  if (origins.length === 0) return process.env.NODE_ENV === 'production' ? { origin: false } : {};
   return {
     origin(origin, callback) {
       if (!origin || origins.includes(origin)) {
@@ -114,6 +176,7 @@ export function audit(action: string, detail: (req: Request, res: Response) => s
       const event: AuditEvent = {
         ts: new Date().toISOString(),
         role: (res.locals.role as ApiRole | null) ?? 'viewer',
+        principal: (res.locals.principal as string | null) ?? 'anonymous',
         action,
         path: req.originalUrl,
         ok: res.statusCode < 400,

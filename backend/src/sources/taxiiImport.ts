@@ -1,6 +1,12 @@
 import type { FetchResult, IndicatorType, ThreatIndicator, ThreatType } from '../types.js';
-import { errorMessage, fetchWithTimeout } from '../util.js';
+import { errorMessage, fetchWithRetry } from '../util.js';
 import { STIX_MEDIA_TYPE, TAXII_MEDIA_TYPE } from '../taxii.js';
+import {
+  getConnectorState,
+  persistStixObjects,
+  setConnectorState,
+  type PersistedStixObject,
+} from '../persist.js';
 
 interface ExternalReference {
   source_name?: string;
@@ -20,6 +26,7 @@ interface ImportedStixObject {
   modified?: string;
   confidence?: number;
   external_references?: ExternalReference[];
+  [key: string]: unknown;
 }
 
 interface TaxiiEnvelope {
@@ -152,16 +159,30 @@ export async function fetchTaxiiImport(limit = 1000): Promise<FetchResult<Threat
     }
     const pageLimit = envInt(process.env.TAXII_IMPORT_PAGE_LIMIT, Math.min(limit, 500), 1, 1000);
     const maxPages = envInt(process.env.TAXII_IMPORT_MAX_PAGES, 5, 1, 100);
-    const addedAfter = process.env.TAXII_IMPORT_ADDED_AFTER?.trim() || null;
+    const configuredAddedAfter = process.env.TAXII_IMPORT_ADDED_AFTER?.trim() || null;
+    const savedState = getConnectorState('taxii_import');
+    const addedAfter = configuredAddedAfter || (typeof savedState.addedAfter === 'string' ? savedState.addedAfter : null);
     const objects: ImportedStixObject[] = [];
     let next: string | null = null;
+    let complete = false;
     for (let page = 0; page < maxPages && objects.length < limit; page += 1) {
-      const res = await fetchWithTimeout(pageUrl(objectsUrl, next, addedAfter, pageLimit), { headers }, 60_000);
+      const res = await fetchWithRetry(pageUrl(objectsUrl, next, addedAfter, pageLimit), { headers }, 60_000);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as TaxiiEnvelope;
       objects.push(...(data.objects ?? []));
-      if (!data.more || !data.next) break;
+      if (!data.more || !data.next) {
+        complete = true;
+        break;
+      }
       next = data.next;
+    }
+    const graphObjects = objects.filter(
+      (object): object is ImportedStixObject & PersistedStixObject =>
+        typeof object.type === 'string' && typeof object.id === 'string',
+    );
+    persistStixObjects(graphObjects, 'taxii_import', fetchedAt);
+    if (!configuredAddedAfter && complete) {
+      setConnectorState('taxii_import', { addedAfter: new Date(fetchedAt).toISOString() }, fetchedAt);
     }
     return { items: parseTaxiiObjects({ objects }, limit), fetchedAt, error: null };
   } catch (err) {

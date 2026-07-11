@@ -1,4 +1,5 @@
 import { enrichIndicator } from '../enrich.js';
+import type { IndicatorType } from '../types.js';
 import { errorMessage } from '../util.js';
 
 export async function executeWebhookAction(url: string, payload: unknown): Promise<void> {
@@ -16,16 +17,16 @@ export async function executeWebhookAction(url: string, payload: unknown): Promi
   }
 }
 
-export async function executeEnrichAction(iocValue: string): Promise<void> {
+export async function executeEnrichAction(iocValue: string, indicatorType?: IndicatorType): Promise<void> {
   try {
-    const type = detectIndicatorType(iocValue);
+    const type = indicatorType ?? detectIndicatorType(iocValue);
     await enrichIndicator(iocValue, type);
   } catch (err) {
     throw new Error(`Enrichment failed: ${errorMessage(err)}`);
   }
 }
 
-function detectIndicatorType(value: string): 'ip' | 'domain' | 'url' | 'hash' {
+function detectIndicatorType(value: string): IndicatorType {
   if (/^https?:\/\//.test(value)) return 'url';
 
   if (/^[0-9a-fA-F]{32}$/.test(value) || /^[0-9a-fA-F]{40}$/.test(value) || /^[0-9a-fA-F]{64}$/.test(value)) {

@@ -12,9 +12,9 @@ function Card({
   sub?: React.ReactNode;
 }) {
   return (
-    <div className="surface-raised rounded-lg p-4">
+    <div className="min-w-0 px-4 py-3">
       <div className="text-xs font-semibold uppercase text-slate-500">{label}</div>
-      <div className="mt-1 text-3xl font-bold text-white">{value}</div>
+      <div className="mt-1 break-words text-2xl font-bold text-white">{value}</div>
       {sub && <div className="mt-2 text-xs text-slate-400">{sub}</div>}
     </div>
   );
@@ -38,7 +38,7 @@ export function StatsCards({ stats, lang }: { stats: Stats | null; lang: Languag
 
   const sev = stats.bySeverity;
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <div className="surface-raised grid grid-cols-1 divide-y divide-line/60 rounded-lg sm:grid-cols-2 sm:divide-x sm:divide-y-0 xl:grid-cols-4">
       <Card label={t.activeIndicators} value={stats.totalIndicators.toLocaleString()} />
       <Card label={t.recentCves} value={stats.totalCves.toLocaleString()} />
       <Card

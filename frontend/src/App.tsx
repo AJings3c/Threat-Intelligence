@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type FormEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type FormEvent } from 'react';
 import {
   Activity,
   Bell,
@@ -23,6 +23,7 @@ import {
   Zap,
   BarChart3,
   FolderKanban,
+  Wrench,
 } from 'lucide-react';
 import type {
   CveItem,
@@ -68,18 +69,35 @@ import { ArchitectureThreatModelPanel } from './components/ArchitectureThreatMod
 import { HuntWorkspace } from './components/HuntWorkspace';
 import { RuleEditor } from './components/RuleEditor';
 import { QualityDashboard } from './components/QualityDashboard';
-import { CaseBoard } from './components/CaseBoard';
-import { ThreatNetworkGraph } from './components/ThreatNetworkGraph';
 import { AttackTimeline } from './components/AttackTimeline';
-import { ThreatHeatmap } from './components/ThreatHeatmap';
+
+const CaseBoard = lazy(() => import('./components/CaseBoard').then((module) => ({ default: module.CaseBoard })));
+const ThreatNetworkGraph = lazy(() =>
+  import('./components/ThreatNetworkGraph').then((module) => ({ default: module.ThreatNetworkGraph })),
+);
+const ThreatHeatmap = lazy(() =>
+  import('./components/ThreatHeatmap').then((module) => ({ default: module.ThreatHeatmap })),
+);
+const OperationsWorkspace = lazy(() =>
+  import('./components/OperationsWorkspace').then((module) => ({ default: module.OperationsWorkspace })),
+);
 
 const REFRESH_MS = 60_000;
 
-export type WorkspaceId = 'overview' | 'sources' | 'investigation' | 'modeling' | 'feed' | 'hunt' | 'rules' | 'quality' | 'cases' | 'network' | 'timeline' | 'heatmap';
+function WorkspaceFallback({ lang }: { lang: Language }) {
+  return (
+    <div className="surface flex min-h-72 items-center justify-center gap-3 rounded-lg text-sm text-slate-400" role="status">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-teal-200 border-t-transparent" aria-hidden="true" />
+      <span>{UI_TEXT[lang].loading}</span>
+    </div>
+  );
+}
+
+export type WorkspaceId = 'overview' | 'sources' | 'investigation' | 'modeling' | 'feed' | 'hunt' | 'rules' | 'quality' | 'cases' | 'network' | 'timeline' | 'heatmap' | 'operations';
 export type DensityMode = 'comfortable' | 'compact';
 export type ThemeMode = 'dark' | 'light';
 
-const WORKSPACE_ORDER: WorkspaceId[] = ['overview', 'hunt', 'cases', 'rules', 'quality', 'network', 'timeline', 'heatmap', 'sources', 'investigation', 'modeling', 'feed'];
+const WORKSPACE_ORDER: WorkspaceId[] = ['overview', 'hunt', 'cases', 'rules', 'quality', 'network', 'timeline', 'heatmap', 'sources', 'investigation', 'modeling', 'feed', 'operations'];
 
 const WORKBENCH_TEXT: Record<
   Language,
@@ -114,6 +132,8 @@ const WORKBENCH_TEXT: Record<
     modelScope: string;
     feedCount: string;
     workspace: Record<WorkspaceId, string>;
+    workspaceTitle: Record<WorkspaceId, string>;
+    workspaceSubtitle: Record<WorkspaceId, string>;
     skip: string;
     currentWorkspace: string;
   }
@@ -161,6 +181,13 @@ const WORKBENCH_TEXT: Record<
       investigation: 'IOC Summary',
       modeling: 'Modeling',
       feed: 'Intel Feed',
+      operations: 'Operations',
+    },
+    workspaceTitle: {
+      overview: 'Operational Overview', hunt: 'Threat Hunting', cases: 'Cases', rules: 'Rules & Automation', quality: 'Intelligence Quality', network: 'Threat Network', timeline: 'IOC Timeline', heatmap: 'Geographic Heatmap', sources: 'Sources & Config', investigation: 'IOC Summary', modeling: 'Threat Modeling', feed: 'Intel Feed', operations: 'Operations & Exchange',
+    },
+    workspaceSubtitle: {
+      overview: 'Current feed health, geospatial signals, CVEs, malware and trend evidence.', hunt: 'Batch IOC search across historical intelligence feeds and saved hunt history.', cases: 'Collaborative incident investigation with IOC evidence and comments.', rules: 'Configure implemented responses and inspect execution history.', quality: 'Quality scoring, time decay, and false-positive tracking.', network: 'Evidence provenance visualization with IOC-to-source relationships.', timeline: 'Chronological IOC observations grouped by evidence-backed categories.', heatmap: 'Global threat density visualization with country-level aggregation.', sources: 'Credential state, test controls, enrichment providers and notification readiness.', investigation: 'Observable summary, local evidence, STRIDE scenarios, enrichment and export.', modeling: 'Source-backed architecture model with DFD, STRIDE, DREAD, controls and attack paths.', feed: 'Filterable IOC table with source, confidence, reliability, country and recency.', operations: 'STIX exchange, detection artifacts, text extraction, jobs and audit visibility.',
     },
     skip: 'Skip to content',
     currentWorkspace: 'Current workspace',
@@ -208,6 +235,13 @@ const WORKBENCH_TEXT: Record<
       investigation: 'IOC 汇总',
       modeling: '建模',
       feed: '情报列表',
+      operations: '运维交换',
+    },
+    workspaceTitle: {
+      overview: '运营总览', hunt: '威胁狩猎', cases: '案例', rules: '规则与自动化', quality: '情报质量', network: '威胁来源网络', timeline: 'IOC 时间线', heatmap: '地理热力图', sources: '来源与配置', investigation: 'IOC 汇总', modeling: '威胁建模', feed: '情报列表', operations: '运维与交换',
+    },
+    workspaceSubtitle: {
+      overview: '当前情报源健康、地理信号、CVE、恶意软件与趋势证据。', hunt: '跨历史情报执行批量 IOC 检索并查看狩猎历史。', cases: '通过 IOC 证据和评论协作跟踪事件调查。', rules: '配置已实现的响应动作并查看执行历史。', quality: '质量评分、时间衰减与假阳性跟踪。', network: '展示 IOC 与来源之间的证据溯源关系。', timeline: '按有证据支持的类别展示 IOC 观测时间顺序。', heatmap: '按国家或地区聚合展示全球威胁密度。', sources: '凭据状态、测试控制、富化服务商与通知就绪状态。', investigation: '可观测对象汇总、本地证据、STRIDE 场景、富化与导出。', modeling: '基于当前情报源的架构模型，包含 DFD、STRIDE、DREAD、控制项与攻击路径。', feed: '可过滤 IOC 表格，展示来源、置信度、可靠性、国家/地区与时间。', operations: '统一访问 STIX 交换、检测制品、文本提取、任务与审计状态。',
     },
     skip: '跳转到内容',
     currentWorkspace: '当前工作区',
@@ -223,6 +257,7 @@ const WORKSPACE_ICON: Record<WorkspaceId, ComponentType<{ className?: string }>>
   network: Share2,
   timeline: Timer,
   heatmap: Flame,
+  operations: Wrench,
   sources: DatabaseZap,
   investigation: Radar,
   modeling: Network,
@@ -281,7 +316,7 @@ function StatusMetric({
       </div>
       <div className="min-w-0">
         <div className="text-xs font-semibold text-slate-500">{label}</div>
-        <div className={`mt-1 truncate text-lg font-bold ${toneClass}`}>{value}</div>
+        <div className={`mt-1 break-words text-lg font-bold ${toneClass}`}>{value}</div>
       </div>
     </div>
   );
@@ -304,7 +339,7 @@ function WorkspaceTitle({
         </div>
         <div>
           <h1 className="text-2xl font-bold leading-tight text-slate-50 md:text-3xl">{title}</h1>
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-400">{subtitle}</p>
+          <p className="mt-1 max-w-3xl break-words text-sm leading-6 text-slate-400">{subtitle}</p>
         </div>
       </div>
     </div>
@@ -332,11 +367,12 @@ function WorkspaceNav({
             key={workspace}
             type="button"
             data-active={active === workspace}
+            aria-pressed={active === workspace}
             onClick={() => onChange(workspace)}
             className={compact ? 'nav-item shrink-0 px-3' : 'nav-item w-full'}
           >
             <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-            <span className="whitespace-nowrap text-sm font-semibold">{copy.workspace[workspace]}</span>
+            <span className="text-sm font-semibold">{copy.workspace[workspace]}</span>
           </button>
         );
       })}
@@ -524,9 +560,12 @@ export default function App() {
   useEffect(() => {
     const base = import.meta.env.VITE_API_BASE ?? '';
     const token = import.meta.env.VITE_API_TOKEN;
+    // Native EventSource cannot attach an Authorization header. Do not leak API
+    // credentials through URLs; authenticated deployments use polling instead.
+    if (token) return undefined;
     let es: EventSource | null = null;
     try {
-      es = new EventSource(`${base}/api/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`);
+      es = new EventSource(`${base}/api/stream`);
       es.addEventListener('refresh', () => {
         void loadOverview();
       });
@@ -634,8 +673,8 @@ export default function App() {
         <div className="mb-6 flex items-center gap-3">
           <BrandLogo theme={theme} />
           <div className="min-w-0">
-            <div className="truncate text-xs font-semibold text-slate-500">{copy.productKicker}</div>
-            <div className="text-sm font-bold leading-tight text-slate-50">{copy.productName}</div>
+            <div className="break-words text-xs font-semibold text-slate-500">{copy.productKicker}</div>
+            <div className="break-words text-sm font-bold leading-tight text-slate-50">{copy.productName}</div>
           </div>
         </div>
 
@@ -710,7 +749,8 @@ export default function App() {
                       key={item}
                       type="button"
                       onClick={() => setLanguage(item)}
-                      className={`min-h-9 rounded-md px-3 text-xs font-semibold transition ${
+                      aria-pressed={language === item}
+                      className={`min-h-11 rounded-md px-3 text-xs font-semibold transition ${
                         language === item ? 'bg-teal-300/15 text-teal-100' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
                       }`}
                     >
@@ -725,7 +765,8 @@ export default function App() {
                       key={item}
                       type="button"
                       onClick={() => setDensity(item)}
-                      className={`min-h-9 rounded-md px-3 text-xs font-semibold transition ${
+                      aria-pressed={density === item}
+                      className={`min-h-11 rounded-md px-3 text-xs font-semibold transition ${
                         density === item ? 'bg-slate-100/10 text-slate-100' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
                       }`}
                     >
@@ -742,7 +783,7 @@ export default function App() {
                         key={item}
                         type="button"
                         onClick={() => setTheme(item)}
-                        className={`min-h-9 rounded-md px-3 text-xs font-semibold transition ${
+                        className={`min-h-11 rounded-md px-3 text-xs font-semibold transition ${
                           theme === item ? 'bg-teal-300/15 text-teal-100' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
                         }`}
                         aria-pressed={theme === item}
@@ -849,50 +890,56 @@ export default function App() {
 
           {activeWorkspace === 'hunt' && (
             <>
-              <WorkspaceTitle icon={Target} title="Threat Hunting" subtitle="Batch IOC search across historical intelligence feeds" />
+              <WorkspaceTitle icon={Target} title={copy.workspaceTitle.hunt} subtitle={copy.workspaceSubtitle.hunt} />
               <HuntWorkspace lang={language} />
             </>
           )}
 
           {activeWorkspace === 'cases' && (
             <>
-              <WorkspaceTitle icon={FolderKanban} title="Cases" subtitle="Collaborative incident investigation and tracking" />
-              <CaseBoard lang={language} />
+              <WorkspaceTitle icon={FolderKanban} title={copy.workspaceTitle.cases} subtitle={copy.workspaceSubtitle.cases} />
+              <Suspense fallback={<WorkspaceFallback lang={language} />}>
+                <CaseBoard lang={language} />
+              </Suspense>
             </>
           )}
 
           {activeWorkspace === 'rules' && (
             <>
-              <WorkspaceTitle icon={Zap} title="Rules & Automation" subtitle="Configure automated responses to threat intelligence" />
+              <WorkspaceTitle icon={Zap} title={copy.workspaceTitle.rules} subtitle={copy.workspaceSubtitle.rules} />
               <RuleEditor lang={language} />
             </>
           )}
 
           {activeWorkspace === 'quality' && (
             <>
-              <WorkspaceTitle icon={BarChart3} title="Intelligence Quality" subtitle="Quality scoring, time decay, and false positive tracking" />
+              <WorkspaceTitle icon={BarChart3} title={copy.workspaceTitle.quality} subtitle={copy.workspaceSubtitle.quality} />
               <QualityDashboard lang={language} />
             </>
           )}
 
           {activeWorkspace === 'network' && (
             <>
-              <WorkspaceTitle icon={Share2} title="Threat Network" subtitle="IOC relationship visualization with force-directed graph" />
-              <ThreatNetworkGraph lang={language} indicators={threats} />
+              <WorkspaceTitle icon={Share2} title={copy.workspaceTitle.network} subtitle={copy.workspaceSubtitle.network} />
+              <Suspense fallback={<WorkspaceFallback lang={language} />}>
+                <ThreatNetworkGraph lang={language} indicators={threats} />
+              </Suspense>
             </>
           )}
 
           {activeWorkspace === 'timeline' && (
             <>
-              <WorkspaceTitle icon={Timer} title="Attack Timeline" subtitle="Chronological attack chain reconstruction with MITRE ATT&CK mapping" />
+              <WorkspaceTitle icon={Timer} title={copy.workspaceTitle.timeline} subtitle={copy.workspaceSubtitle.timeline} />
               <AttackTimeline lang={language} indicators={threats} />
             </>
           )}
 
           {activeWorkspace === 'heatmap' && (
             <>
-              <WorkspaceTitle icon={Flame} title="Geographic Heatmap" subtitle="Global threat density visualization with country-level aggregation" />
-              <ThreatHeatmap lang={language} indicators={threats} />
+              <WorkspaceTitle icon={Flame} title={copy.workspaceTitle.heatmap} subtitle={copy.workspaceSubtitle.heatmap} />
+              <Suspense fallback={<WorkspaceFallback lang={language} />}>
+                <ThreatHeatmap lang={language} indicators={threats} />
+              </Suspense>
             </>
           )}
 
@@ -910,6 +957,13 @@ export default function App() {
                 <Filters value={filters} onChange={setFilters} lang={language} />
               </div>
               <ThreatTable threats={threats} total={total} loading={threatsLoading} lang={language} />
+            </>
+          )}
+
+          {activeWorkspace === 'operations' && (
+            <>
+              <WorkspaceTitle icon={Wrench} title={copy.workspaceTitle.operations} subtitle={copy.workspaceSubtitle.operations} />
+              <Suspense fallback={<WorkspaceFallback lang={language} />}><OperationsWorkspace lang={language} /></Suspense>
             </>
           )}
 

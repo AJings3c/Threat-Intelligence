@@ -1,17 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
 import { Play, Pause, RotateCcw, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { Language, ThreatIndicator } from '../types';
+import { evidenceCategory } from '../evidence';
 
 interface TimelineEvent {
   id: string;
   timestamp: number;
   indicator: ThreatIndicator;
-  technique?: string;
-  tactic?: string;
+  category: string;
 }
 
-interface AttackPhase {
-  tactic: string;
+interface ActivityGroup {
+  category: string;
   events: TimelineEvent[];
   color: string;
 }
@@ -19,7 +19,7 @@ interface AttackPhase {
 const TIMELINE_TEXT = {
   en: {
     title: 'Attack Timeline',
-    subtitle: 'Chronological attack chain reconstruction',
+    subtitle: 'Chronological IOC observations grouped by evidence-backed categories',
     play: 'Play',
     pause: 'Pause',
     reset: 'Reset',
@@ -27,13 +27,13 @@ const TIMELINE_TEXT = {
     events: 'Events',
     noData: 'No timeline data available',
     currentEvent: 'Current Event',
-    phase: 'Phase',
-    technique: 'Technique',
+    phase: 'Evidence category',
     indicator: 'Indicator',
+    type: 'Type', previous: 'Previous event', next: 'Next event', eventLabel: 'Select event',
   },
   zh: {
     title: '攻击时间线',
-    subtitle: '按时序重建攻击链',
+    subtitle: '按可核验证据类别展示 IOC 观测时间线',
     play: '播放',
     pause: '暂停',
     reset: '重置',
@@ -41,33 +41,25 @@ const TIMELINE_TEXT = {
     events: '事件',
     noData: '无时间线数据',
     currentEvent: '当前事件',
-    phase: '阶段',
-    technique: '技术',
+    phase: '证据类别',
     indicator: '指标',
+    type: '类型', previous: '上一事件', next: '下一事件', eventLabel: '选择事件',
   },
 };
 
-const MITRE_TACTICS = [
-  { id: 'reconnaissance', name: 'Reconnaissance', color: '#3b82f6' },
-  { id: 'initial-access', name: 'Initial Access', color: '#8b5cf6' },
-  { id: 'execution', name: 'Execution', color: '#ec4899' },
-  { id: 'persistence', name: 'Persistence', color: '#f59e0b' },
-  { id: 'privilege-escalation', name: 'Privilege Escalation', color: '#ef4444' },
-  { id: 'defense-evasion', name: 'Defense Evasion', color: '#10b981' },
-  { id: 'credential-access', name: 'Credential Access', color: '#06b6d4' },
-  { id: 'discovery', name: 'Discovery', color: '#84cc16' },
-  { id: 'lateral-movement', name: 'Lateral Movement', color: '#f97316' },
-  { id: 'collection', name: 'Collection', color: '#a855f7' },
-  { id: 'exfiltration', name: 'Exfiltration', color: '#dc2626' },
-  { id: 'impact', name: 'Impact', color: '#991b1b' },
+const ACTIVITY_CATEGORIES = [
+  { id: 'phishing', en: 'Phishing indicator', zh: '钓鱼指标', color: '#8b5cf6' },
+  { id: 'command-and-control', en: 'Command-and-control indicator', zh: '命令与控制指标', color: '#ef4444' },
+  { id: 'malware', en: 'Malware indicator', zh: '恶意软件指标', color: '#ec4899' },
+  { id: 'vulnerability', en: 'Vulnerability evidence', zh: '漏洞证据', color: '#f59e0b' },
+  { id: 'scanner', en: 'Scanning activity', zh: '扫描活动', color: '#3b82f6' },
+  { id: 'network', en: 'Malicious network indicator', zh: '恶意网络指标', color: '#f97316' },
+  { id: 'social', en: 'Social intelligence mention', zh: '社交情报提及', color: '#06b6d4' },
+  { id: 'other', en: 'Other observation', zh: '其他观测', color: '#64748b' },
 ];
 
-function inferTactic(indicator: ThreatIndicator): string {
-  if (indicator.type === 'phishing_url') return 'initial-access';
-  if (indicator.type === 'c2_server') return 'command-and-control';
-  if (indicator.type === 'malware_host') return 'execution';
-  if (indicator.type === 'malicious_hash') return 'execution';
-  return 'discovery';
+function languageName(category: (typeof ACTIVITY_CATEGORIES)[number], lang: Language): string {
+  return lang === 'zh' ? category.zh : category.en;
 }
 
 export function AttackTimeline({ lang, indicators }: { lang: Language; indicators: ThreatIndicator[] }) {
@@ -92,14 +84,14 @@ export function AttackTimeline({ lang, indicators }: { lang: Language; indicator
         id: ind.id,
         timestamp,
         indicator: ind,
-        tactic: inferTactic(ind),
+        category: evidenceCategory(ind),
       };
     });
 
-  const phases: AttackPhase[] = MITRE_TACTICS.map((tactic) => ({
-    tactic: tactic.name,
-    events: events.filter((e) => e.tactic === tactic.id),
-    color: tactic.color,
+  const groups: ActivityGroup[] = ACTIVITY_CATEGORIES.map((category) => ({
+    category: languageName(category, lang),
+    events: events.filter((event) => event.category === category.id),
+    color: category.color,
   })).filter((phase) => phase.events.length > 0);
 
   useEffect(() => {
@@ -124,6 +116,10 @@ export function AttackTimeline({ lang, indicators }: { lang: Language; indicator
       }
     };
   }, [isPlaying, currentIndex, events.length, speed]);
+
+  useEffect(() => {
+    setCurrentIndex((index) => Math.min(index, Math.max(0, events.length - 1)));
+  }, [events.length]);
 
   const handlePlayPause = () => {
     if (currentIndex >= events.length - 1) {
@@ -154,13 +150,14 @@ export function AttackTimeline({ lang, indicators }: { lang: Language; indicator
   }
 
   const currentEvent = events[currentIndex];
+  const currentCategory = ACTIVITY_CATEGORIES.find((category) => category.id === currentEvent.category);
   const progress = events.length > 1 ? (currentIndex / (events.length - 1)) * 100 : 0;
 
   return (
     <div className="space-y-4">
       <div className="surface rounded-lg p-4">
-        <div className="mb-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={handlePlayPause}
@@ -177,15 +174,15 @@ export function AttackTimeline({ lang, indicators }: { lang: Language; indicator
               <RotateCcw className="h-4 w-4" />
               {t.reset}
             </button>
-            <button type="button" onClick={handlePrev} className="control px-3 py-2 text-sm">
-              <ChevronLeft className="h-4 w-4" />
+            <button type="button" onClick={handlePrev} disabled={currentIndex === 0} aria-label={t.previous} className="control flex h-11 w-11 items-center justify-center text-sm disabled:opacity-40">
+              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
             </button>
-            <button type="button" onClick={handleNext} className="control px-3 py-2 text-sm">
-              <ChevronRight className="h-4 w-4" />
+            <button type="button" onClick={handleNext} disabled={currentIndex === events.length - 1} aria-label={t.next} className="control flex h-11 w-11 items-center justify-center text-sm disabled:opacity-40">
+              <ChevronRight className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <span className="text-xs text-slate-400">{t.speed}</span>
             <div className="flex gap-1">
               {[0.5, 1, 2, 4].map((s) => (
@@ -193,7 +190,8 @@ export function AttackTimeline({ lang, indicators }: { lang: Language; indicator
                   key={s}
                   type="button"
                   onClick={() => setSpeed(s)}
-                  className={`control px-2 py-1 text-xs ${speed === s ? 'bg-teal-300/15 text-teal-100' : 'text-slate-400'}`}
+                  aria-pressed={speed === s}
+                  className={`control min-h-11 min-w-11 px-2 text-xs ${speed === s ? 'bg-teal-300/15 text-teal-100' : 'text-slate-400'}`}
                 >
                   {s}x
                 </button>
@@ -213,7 +211,7 @@ export function AttackTimeline({ lang, indicators }: { lang: Language; indicator
             <span>
               {currentIndex + 1} / {events.length} {t.events}
             </span>
-            <span>{new Date(currentEvent.timestamp).toLocaleString()}</span>
+            <span>{new Date(currentEvent.timestamp).toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US')}</span>
           </div>
         </div>
 
@@ -226,11 +224,11 @@ export function AttackTimeline({ lang, indicators }: { lang: Language; indicator
                 <div
                   className="inline-block rounded px-2 py-1 text-xs font-bold"
                   style={{
-                    backgroundColor: `${MITRE_TACTICS.find((tac) => tac.id === currentEvent.tactic)?.color}22`,
-                    color: MITRE_TACTICS.find((tac) => tac.id === currentEvent.tactic)?.color,
+                    backgroundColor: `${currentCategory?.color ?? '#64748b'}22`,
+                    color: currentCategory?.color ?? '#94a3b8',
                   }}
                 >
-                  {MITRE_TACTICS.find((tac) => tac.id === currentEvent.tactic)?.name}
+                  {currentCategory ? languageName(currentCategory, lang) : currentEvent.category}
                 </div>
               </div>
               <div>
@@ -238,7 +236,7 @@ export function AttackTimeline({ lang, indicators }: { lang: Language; indicator
                 <div className="font-mono text-sm text-slate-200">{currentEvent.indicator.indicator}</div>
               </div>
               <div>
-                <div className="mb-1 text-xs font-semibold text-slate-400">Type</div>
+                <div className="mb-1 text-xs font-semibold text-slate-400">{t.type}</div>
                 <div className="inline-block rounded bg-slate-500/20 px-2 py-1 text-xs font-bold capitalize text-slate-300">
                   {currentEvent.indicator.indicatorType}
                 </div>
@@ -249,34 +247,38 @@ export function AttackTimeline({ lang, indicators }: { lang: Language; indicator
       </div>
 
       <div className="surface rounded-lg p-4">
-        <h3 className="mb-3 text-sm font-bold text-slate-200">Attack Chain Phases</h3>
+        <h3 className="mb-3 text-sm font-bold text-slate-200">{lang === 'zh' ? 'IOC 观测类别' : 'IOC observation categories'}</h3>
         <div className="space-y-2">
-          {phases.map((phase) => (
-            <div key={phase.tactic} className="surface-raised rounded-lg p-3">
+          {groups.map((group) => (
+            <div key={group.category} className="surface-raised rounded-lg p-3">
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="h-3 w-3 rounded-full" style={{ backgroundColor: phase.color }} />
-                  <span className="text-sm font-semibold text-slate-200">{phase.tactic}</span>
+                  <div className="h-3 w-3 rounded-full" style={{ backgroundColor: group.color }} />
+                  <span className="text-sm font-semibold text-slate-200">{group.category}</span>
                 </div>
                 <span className="rounded bg-slate-500/20 px-2 py-0.5 text-xs font-bold text-slate-400">
-                  {phase.events.length}
+                  {group.events.length}
                 </span>
               </div>
-              <div className="flex gap-1">
-                {phase.events.map((event) => (
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(44px,1fr))] gap-1">
+                {group.events.map((event) => (
                   <button
                     key={event.id}
                     type="button"
                     onClick={() => setCurrentIndex(events.indexOf(event))}
-                    className={`h-2 flex-1 rounded transition-all ${
+                    aria-label={`${t.eventLabel}: ${event.indicator.indicator}`}
+                    aria-pressed={events.indexOf(event) === currentIndex}
+                    className="flex h-11 min-w-11 items-center"
+                    title={event.indicator.indicator}
+                  >
+                    <span aria-hidden="true" className={`h-2 w-full rounded transition-all ${
                       events.indexOf(event) === currentIndex
                         ? 'bg-teal-400'
                         : events.indexOf(event) < currentIndex
                           ? 'bg-slate-500'
                           : 'bg-slate-700'
-                    }`}
-                    title={event.indicator.indicator}
-                  />
+                    }`} />
+                  </button>
                 ))}
               </div>
             </div>

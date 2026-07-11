@@ -9,6 +9,8 @@ import { testEnrichmentProvider, testThreatSource } from '../src/integrationTest
 beforeEach(() => {
   delete process.env.OTX_API_KEY;
   delete process.env.VIRUSTOTAL_API_KEY;
+  delete process.env.GREYNOISE_API_KEY;
+  delete process.env.URLSCAN_API_KEY;
 });
 
 describe('integration tests', () => {
@@ -34,5 +36,25 @@ describe('integration tests', () => {
       configured: false,
     });
     expect(result.requiredEnv).toContain('VIRUSTOTAL_API_KEY');
+  });
+
+  it('reports missing credentials for added enrichment providers', async () => {
+    const greynoise = await testEnrichmentProvider('greynoise');
+    const urlscan = await testEnrichmentProvider('urlscan');
+
+    expect(greynoise).toMatchObject({
+      kind: 'provider',
+      id: 'greynoise',
+      status: 'missing_config',
+      configured: false,
+    });
+    expect(greynoise.requiredEnv).toContain('GREYNOISE_API_KEY');
+    expect(urlscan).toMatchObject({
+      kind: 'provider',
+      id: 'urlscan',
+      status: 'missing_config',
+      configured: false,
+    });
+    expect(urlscan.requiredEnv).toContain('URLSCAN_API_KEY');
   });
 });

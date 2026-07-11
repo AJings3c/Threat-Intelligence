@@ -1,21 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { Maximize2, Minimize2, Download } from 'lucide-react';
-import type { Language, ThreatIndicator, IndicatorType, Severity } from '../types';
+import type { Language, ThreatIndicator } from '../types';
+import { buildProvenanceGraph, type ProvenanceGraphNode } from '../evidence';
 
-interface ThreatNode extends d3.SimulationNodeDatum {
-  id: string;
-  label: string;
-  type: IndicatorType;
-  severity: Severity;
-  confidence: number;
-  group: number;
-}
+type ThreatNode = ProvenanceGraphNode & d3.SimulationNodeDatum;
 
 interface ThreatLink extends d3.SimulationLinkDatum<ThreatNode> {
   source: string | ThreatNode;
   target: string | ThreatNode;
-  relation: 'resolves_to' | 'communicates_with' | 'shares_source' | 'related';
+  relation: 'reported_by';
   strength: number;
 }
 
@@ -53,6 +47,7 @@ const NODE_COLORS = {
   hash: '#a78bfa',
   cidr: '#60a5fa',
   cve: '#f87171',
+  source: '#94a3b8',
 };
 
 const SEVERITY_SIZE = {
@@ -85,7 +80,7 @@ export function ThreatNetworkGraph({ lang, indicators }: { lang: Language; indic
     const width = container.clientWidth;
     const height = container.clientHeight;
 
-    const svg = d3.select(svgRef.current);
+    const svg = d3.select<SVGSVGElement, unknown>(svgRef.current);
     svg.selectAll('*').remove();
 
     const g = svg.append('g');
@@ -97,54 +92,11 @@ export function ThreatNetworkGraph({ lang, indicators }: { lang: Language; indic
         g.attr('transform', event.transform.toString());
       });
 
-    svg.call(zoom as any);
+    svg.call(zoom);
 
-    const nodes: ThreatNode[] = indicators.slice(0, 100).map((ind, idx) => ({
-      id: ind.id,
-      label: ind.indicator,
-      type: ind.indicatorType,
-      severity: ind.severity,
-      confidence: ind.confidence ?? 50,
-      group: idx % 5,
-    }));
-
-    const links: ThreatLink[] = [];
-
-    for (let i = 0; i < nodes.length; i++) {
-      const source = nodes[i];
-      const sourceInd = indicators[i];
-
-      if (sourceInd.sources && sourceInd.sources.length > 1) {
-        for (let j = i + 1; j < Math.min(i + 10, nodes.length); j++) {
-          const target = nodes[j];
-          const targetInd = indicators[j];
-
-          if (targetInd.sources && targetInd.sources.some((s) => sourceInd.sources?.includes(s))) {
-            links.push({
-              source: source.id,
-              target: target.id,
-              relation: 'shares_source',
-              strength: 0.3,
-            });
-          }
-        }
-      }
-
-      if (source.type === 'domain') {
-        for (let j = 0; j < nodes.length; j++) {
-          if (i !== j && nodes[j].type === 'ip') {
-            if (Math.random() < 0.05) {
-              links.push({
-                source: source.id,
-                target: nodes[j].id,
-                relation: 'resolves_to',
-                strength: 0.5,
-              });
-            }
-          }
-        }
-      }
-    }
+    const graph = buildProvenanceGraph(indicators);
+    const nodes: ThreatNode[] = graph.nodes.map((node) => ({ ...node }));
+    const links: ThreatLink[] = graph.edges.map((edge) => ({ ...edge }));
 
     setStats({ nodes: nodes.length, links: links.length });
 
@@ -171,36 +123,42 @@ export function ThreatNetworkGraph({ lang, indicators }: { lang: Language; indic
       .attr('stroke-width', 1.5)
       .attr('stroke-opacity', 0.6);
 
+    const drag = d3
+      .drag<SVGCircleElement, ThreatNode>()
+      .on('start', (event, d) => {
+        if (!event.active) simulation.alphaTarget(0.3).restart();
+        d.fx = d.x;
+        d.fy = d.y;
+      })
+      .on('drag', (event, d) => {
+        d.fx = event.x;
+        d.fy = event.y;
+      })
+      .on('end', (event, d) => {
+        if (!event.active) simulation.alphaTarget(0);
+        d.fx = null;
+        d.fy = null;
+      });
+
     const node = g
       .append('g')
-      .selectAll('circle')
+      .selectAll<SVGCircleElement, ThreatNode>('circle')
       .data(nodes)
       .join('circle')
-      .attr('r', (d) => SEVERITY_SIZE[d.severity])
+      .attr('r', (d) => (d.severity ? SEVERITY_SIZE[d.severity] : 8))
       .attr('fill', (d) => NODE_COLORS[d.type])
       .attr('stroke', '#1e293b')
       .attr('stroke-width', 2)
       .style('cursor', 'pointer')
-      .call(
-        d3
-          .drag<SVGCircleElement, ThreatNode>()
-          .on('start', (event, d) => {
-            if (!event.active) simulation.alphaTarget(0.3).restart();
-            d.fx = d.x;
-            d.fy = d.y;
-          })
-          .on('drag', (event, d) => {
-            d.fx = event.x;
-            d.fy = event.y;
-          })
-          .on('end', (event, d) => {
-            if (!event.active) simulation.alphaTarget(0);
-            d.fx = null;
-            d.fy = null;
-          }) as any,
-      );
+      .call(drag);
 
-    node.append('title').text((d) => `${d.label}\n${d.type} | ${d.severity}\nConfidence: ${d.confidence}%`);
+    node
+      .append('title')
+      .text((d) =>
+        d.type === 'source'
+          ? `${d.label}\nThreat intelligence source`
+          : `${d.label}\n${d.type} | ${d.severity}\nConfidence: ${d.confidence}%`,
+      );
 
     simulation.on('tick', () => {
       link
@@ -265,7 +223,7 @@ export function ThreatNetworkGraph({ lang, indicators }: { lang: Language; indic
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-4 text-sm text-slate-400">
           <span>
             {stats.nodes} {t.nodes}
@@ -274,11 +232,11 @@ export function ThreatNetworkGraph({ lang, indicators }: { lang: Language; indic
             {stats.links} {t.links}
           </span>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             type="button"
             onClick={exportPNG}
-            className="control inline-flex items-center gap-2 px-3 py-1.5 text-xs"
+            className="control inline-flex min-h-11 items-center gap-2 px-3 text-xs"
           >
             <Download className="h-3.5 w-3.5" />
             {t.export}
@@ -286,7 +244,7 @@ export function ThreatNetworkGraph({ lang, indicators }: { lang: Language; indic
           <button
             type="button"
             onClick={toggleFullscreen}
-            className="control inline-flex items-center gap-2 px-3 py-1.5 text-xs"
+            className="control inline-flex min-h-11 items-center gap-2 px-3 text-xs"
           >
             {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
             {isFullscreen ? t.exitFullscreen : t.fullscreen}

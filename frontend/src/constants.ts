@@ -15,6 +15,7 @@ export const SOURCE_LABELS: Record<ThreatSource, string> = {
   phishtank: 'PhishTank',
   abuseipdb: 'AbuseIPDB',
   otx: 'AlienVault OTX',
+  misp: 'MISP',
   taxii_import: 'External TAXII',
 };
 

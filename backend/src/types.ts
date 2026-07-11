@@ -16,6 +16,7 @@ export type ThreatSource =
   | 'phishtank'
   | 'abuseipdb'
   | 'otx'
+  | 'misp'
   | 'taxii_import';
 
 export type ThreatType =
@@ -36,11 +37,25 @@ export type Severity = 'low' | 'medium' | 'high' | 'critical';
 export type Tlp = 'clear' | 'green' | 'amber' | 'red';
 export type SourceReliability = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 export type SourceHealthStatus = 'healthy' | 'disabled' | 'warming' | 'error' | 'stale' | 'deprecated';
-export type EnrichmentProvider = 'virustotal' | 'shodan' | 'censys';
+export type EnrichmentProvider = 'virustotal' | 'shodan' | 'censys' | 'greynoise' | 'urlscan';
 export type IntegrationKind = 'source' | 'provider';
 export type IntegrationTestStatus = 'ok' | 'missing_config' | 'failed' | 'unsupported';
 export type ApiRole = 'viewer' | 'analyst' | 'admin';
 export type Language = 'en' | 'zh';
+export type DetectionArtifactFormat = 'sigma' | 'yara' | 'snort';
+
+export interface DetectionArtifact {
+  id: string;
+  source: ThreatSource;
+  format: DetectionArtifactFormat;
+  content: string;
+  title: string;
+  description?: string;
+  tags: string[];
+  reference?: string;
+  firstSeen?: string;
+  lastSeen?: string;
+}
 
 export interface ThreatIndicator {
   id: string;
@@ -333,6 +348,7 @@ export interface ArchitectureThreatModel {
 export interface AuditEvent {
   ts: string;
   role: ApiRole;
+  principal: string;
   action: string;
   path: string;
   ok: boolean;
@@ -424,4 +440,3 @@ export interface HuntHistory {
   initiatedBy: string;
   createdAt: number;
 }
-
