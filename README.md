@@ -12,10 +12,6 @@
   <strong>中文</strong> | <a href="README_EN.md">EN</a>
 </p>
 
-<p align="center">
-  <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo" width="240" />
-</p>
-
 代码事实、已落地控制和需独立架构决策的能力边界见 [`docs/REMEDIATION_STATUS.md`](docs/REMEDIATION_STATUS.md)。
 
 ## 功能截图
