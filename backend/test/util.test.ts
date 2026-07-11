@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cvssToSeverity, errorMessage, extractToken } from '../src/util.js';
+import { cvssToSeverity, errorMessage, extractToken, fetchWithRetry } from '../src/util.js';
 
 describe('cvssToSeverity', () => {
   it('maps CVSS bands to severities', () => {
@@ -28,19 +28,38 @@ describe('errorMessage', () => {
 });
 
 describe('extractToken', () => {
-  it('reads a Bearer token, falling back to header then query', () => {
-    expect(extractToken('Bearer abc', undefined, undefined)).toBe('abc');
-    expect(extractToken(undefined, 'hdr', undefined)).toBe('hdr');
-    expect(extractToken(undefined, undefined, 'qry')).toBe('qry');
+  it('reads a Bearer token, falling back to the API token header', () => {
+    expect(extractToken('Bearer abc', undefined)).toBe('abc');
+    expect(extractToken(undefined, 'hdr')).toBe('hdr');
   });
 
-  it('prefers Authorization over header over query', () => {
-    expect(extractToken('Bearer a', 'b', 'c')).toBe('a');
-    expect(extractToken(undefined, 'b', 'c')).toBe('b');
+  it('prefers Authorization over the API token header', () => {
+    expect(extractToken('Bearer a', 'b')).toBe('a');
+    expect(extractToken(undefined, 'b')).toBe('b');
   });
 
   it('returns empty string when nothing is provided or scheme is wrong', () => {
-    expect(extractToken(undefined, undefined, undefined)).toBe('');
-    expect(extractToken('Basic xyz', undefined, undefined)).toBe('');
+    expect(extractToken(undefined, undefined)).toBe('');
+    expect(extractToken('Basic xyz', undefined)).toBe('');
+  });
+});
+
+describe('fetchWithRetry', () => {
+  it('retries transient responses and honors Retry-After', async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return calls === 1
+        ? new Response('busy', { status: 503, headers: { 'Retry-After': '0' } })
+        : new Response('{}', { status: 200 });
+    }) as typeof fetch;
+    try {
+      const response = await fetchWithRetry('https://example.test/feed', {}, 1000, 2);
+      expect(response.status).toBe(200);
+      expect(calls).toBe(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

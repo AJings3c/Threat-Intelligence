@@ -1,0 +1,30 @@
+services:
+  threat-intel:
+    build: .
+    image: threat-intel-platform:local
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-4000}:4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATA_DIR: /app/data
+      API_TOKEN: "${API_TOKEN:-}"
+      API_VIEWER_TOKENS: "${API_VIEWER_TOKENS:-}"
+      API_ANALYST_TOKENS: "${API_ANALYST_TOKENS:-}"
+      API_ADMIN_TOKENS: "${API_ADMIN_TOKENS:-}"
+      AUTH_PROXY_ENABLED: "${AUTH_PROXY_ENABLED:-false}"
+      AUTH_PROXY_SHARED_SECRET: "${AUTH_PROXY_SHARED_SECRET:-}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-}"
+    volumes:
+      - threat-intel-data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  threat-intel-data:

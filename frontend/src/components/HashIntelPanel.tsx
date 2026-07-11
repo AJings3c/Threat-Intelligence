@@ -3,11 +3,6 @@ import { SOURCE_LABELS } from '../constants';
 import { UI_TEXT } from '../i18n';
 import { SeverityBadge } from './SeverityBadge';
 
-function compactHash(value: string): string {
-  if (value.length <= 24) return value;
-  return `${value.slice(0, 12)}…${value.slice(-8)}`;
-}
-
 function timeAgo(iso: string | null | undefined, lang: Language): string {
   if (!iso) return '—';
   const then = new Date(iso).getTime();
@@ -47,10 +42,10 @@ export function HashIntelPanel({
             const content = (
               <>
                 <div className="min-w-0">
-                  <div className="truncate font-mono text-[12px] text-sky-300" title={hash.indicator}>
-                    {compactHash(hash.indicator)}
+                  <div className="break-all font-mono text-[12px] text-sky-300">
+                    {hash.indicator}
                   </div>
-                  <div className="mt-1 truncate text-xs text-slate-500">
+                  <div className="mt-1 break-words text-xs text-slate-500">
                     {hash.malwareFamily ?? hash.title ?? SOURCE_LABELS[hash.source]}
                   </div>
                 </div>
@@ -80,7 +75,7 @@ export function HashIntelPanel({
           {families.slice(0, 12).map((family) => (
             <div key={family.family} className="border-b border-line/40 px-4 py-3 last:border-b-0">
               <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0 truncate text-sm font-semibold text-slate-200">
+                <div className="min-w-0 break-words text-sm font-semibold text-slate-200">
                   {family.family}
                 </div>
                 <div className="shrink-0 text-xs font-semibold text-slate-400">

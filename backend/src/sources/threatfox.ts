@@ -5,7 +5,7 @@ import type {
   ThreatIndicator,
   ThreatType,
 } from '../types.js';
-import { fetchWithTimeout, errorMessage } from '../util.js';
+import { fetchWithRetry, errorMessage } from '../util.js';
 
 const THREATFOX_RECENT_URL = 'https://threatfox.abuse.ch/export/json/recent/';
 
@@ -161,7 +161,7 @@ export function parseThreatFoxResponse(
 export async function fetchThreatFox(limit = 1000): Promise<FetchResult<ThreatIndicator>> {
   const fetchedAt = Date.now();
   try {
-    const res = await fetchWithTimeout(THREATFOX_RECENT_URL, {}, 30_000);
+    const res = await fetchWithRetry(THREATFOX_RECENT_URL, {}, 30_000);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as ThreatFoxResponse;
     return { items: parseThreatFoxResponse(data, fetchedAt, limit), fetchedAt, error: null };

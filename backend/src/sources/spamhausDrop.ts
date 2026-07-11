@@ -1,5 +1,5 @@
 import type { FetchResult, ThreatIndicator } from '../types.js';
-import { fetchWithTimeout, errorMessage } from '../util.js';
+import { fetchWithRetry, errorMessage } from '../util.js';
 
 const SPAMHAUS_DROP_V4_URL = 'https://www.spamhaus.org/drop/drop_v4.json';
 const CIDR_RE = /^(?:\d{1,3}\.){3}\d{1,3}\/(?:[0-9]|[12][0-9]|3[0-2])$/;
@@ -55,7 +55,7 @@ export function parseSpamhausDropFeed(text: string, limit = 1000): ThreatIndicat
 export async function fetchSpamhausDrop(limit = 1000): Promise<FetchResult<ThreatIndicator>> {
   const fetchedAt = Date.now();
   try {
-    const res = await fetchWithTimeout(SPAMHAUS_DROP_V4_URL, {}, 25_000);
+    const res = await fetchWithRetry(SPAMHAUS_DROP_V4_URL, {}, 25_000);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const text = await res.text();
     return { items: parseSpamhausDropFeed(text, limit), fetchedAt, error: null };

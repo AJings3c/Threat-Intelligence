@@ -15,6 +15,7 @@ import type {
   IntegrationKind,
   IntegrationTestResult,
   EnrichmentProvider,
+  ProviderConfigStatus,
   ThreatSource,
   InvestigationHistoryEntry,
   ArchitectureThreatModel,
@@ -24,23 +25,39 @@ import type {
 const BASE = import.meta.env.VITE_API_BASE ?? '';
 const TOKEN = import.meta.env.VITE_API_TOKEN;
 
-async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, TOKEN ? { headers: { 'x-api-token': TOKEN } } : undefined);
-  if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  if (TOKEN) headers.set('x-api-token', TOKEN);
+  return fetch(`${BASE}${path}`, { ...init, headers });
+}
+
+export async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await apiFetch(path, init);
+  if (!res.ok) {
+    let detail = '';
+    try {
+      const body = (await res.json()) as { error?: string; message?: string; description?: string };
+      detail = body.error ?? body.message ?? body.description ?? '';
+    } catch {
+      detail = await res.text().catch(() => '');
+    }
+    throw new Error(detail || `Request failed: ${res.status}`);
+  }
   return (await res.json()) as T;
 }
 
+async function getJson<T>(path: string): Promise<T> {
+  return apiJson<T>(path);
+}
+
 async function postJson<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  return apiJson<T>(path, {
     method: 'POST',
     headers: {
-      ...(TOKEN ? { 'x-api-token': TOKEN } : {}),
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-  if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-  return (await res.json()) as T;
 }
 
 export interface ThreatQuery {
@@ -120,6 +137,10 @@ export function enrichIoc(indicator: string, type: IndicatorType): Promise<Enric
   return getJson<EnrichmentResponse>(`/api/enrich?${params.toString()}`);
 }
 
+export function fetchEnrichmentProviders(): Promise<{ providers: ProviderConfigStatus[] }> {
+  return getJson<{ providers: ProviderConfigStatus[] }>('/api/enrich/providers');
+}
+
 export function fetchInvestigationHistory(limit = 20): Promise<{ enabled: boolean; points: InvestigationHistoryEntry[] }> {
   return getJson<{ enabled: boolean; points: InvestigationHistoryEntry[] }>(
     `/api/investigations/history?limit=${limit}`,
@@ -131,8 +152,8 @@ export function fetchArchitectureThreatModel(lang: Language = 'en'): Promise<Arc
 }
 
 export async function fetchText(path: string): Promise<string> {
-  const res = await fetch(`${BASE}${path}`, TOKEN ? { headers: { 'x-api-token': TOKEN } } : undefined);
-  if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+  const res = await apiFetch(path);
+  if (!res.ok) throw new Error((await res.text().catch(() => '')) || `Request failed: ${res.status}`);
   return await res.text();
 }
 

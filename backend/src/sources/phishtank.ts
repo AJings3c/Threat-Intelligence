@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { FetchResult, ThreatIndicator } from '../types.js';
-import { errorMessage, fetchWithTimeout } from '../util.js';
+import { errorMessage, fetchWithRetry } from '../util.js';
 
 const PHISHTANK_FEED_URL = 'https://data.phishtank.com/data/{appKey}/online-valid.json';
 
@@ -83,7 +83,7 @@ export async function fetchPhishTank(limit = 1000): Promise<FetchResult<ThreatIn
   if (!appKey) return { items: [], fetchedAt, error: null };
 
   try {
-    const res = await fetchWithTimeout(
+    const res = await fetchWithRetry(
       feedUrl(appKey),
       { headers: { Accept: 'application/json' } },
       60_000,

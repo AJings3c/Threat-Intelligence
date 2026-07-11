@@ -1,5 +1,5 @@
 import type { FetchResult, IndicatorType, Severity, ThreatIndicator, ThreatType } from '../types.js';
-import { errorMessage, fetchWithTimeout } from '../util.js';
+import { errorMessage, fetchWithRetry } from '../util.js';
 
 const OTX_SUBSCRIBED_PULSES_URL = 'https://otx.alienvault.com/api/v1/pulses/subscribed';
 
@@ -114,7 +114,7 @@ export async function fetchOtx(limit = 1000): Promise<FetchResult<ThreatIndicato
     );
     const requestedLimit = envInt(process.env.OTX_LIMIT, limit, 1, 10_000);
     const params = new URLSearchParams({ limit: String(Math.min(requestedLimit, 100)) });
-    const res = await fetchWithTimeout(
+    const res = await fetchWithRetry(
       `${apiBase}?${params.toString()}`,
       { headers: { 'X-OTX-API-KEY': apiKey } },
       45_000,

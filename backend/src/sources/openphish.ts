@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { ThreatIndicator, FetchResult } from '../types.js';
-import { fetchWithTimeout, errorMessage } from '../util.js';
+import { fetchWithRetry, errorMessage } from '../util.js';
 
 const OPENPHISH_URL = 'https://openphish.com/feed.txt';
 
@@ -44,7 +44,7 @@ export function parseOpenPhishFeed(text: string, fetchedAt = Date.now(), limit =
 export async function fetchOpenPhish(limit = 1000): Promise<FetchResult<ThreatIndicator>> {
   const fetchedAt = Date.now();
   try {
-    const res = await fetchWithTimeout(
+    const res = await fetchWithRetry(
       OPENPHISH_URL,
       { headers: { Accept: 'text/plain' } },
       25_000,

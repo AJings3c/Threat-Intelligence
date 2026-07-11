@@ -19,24 +19,21 @@ import type {
 import { SeverityBadge } from './SeverityBadge';
 import { POSTURE_LABEL, STRIDE_LABEL, UI_TEXT } from '../i18n';
 import type { GraphColumn, GraphEdge, GraphNode } from './GraphDiagram';
+import { EnrichmentAggregatePanel } from './EnrichmentAggregatePanel';
 
 const GraphDiagram = lazy(() => import('./GraphDiagram').then((module) => ({ default: module.GraphDiagram })));
 
 const INDICATOR_TYPES: Array<IndicatorType | ''> = ['', 'ip', 'domain', 'url', 'hash', 'cidr', 'cve'];
-
-function compact(value: string): string {
-  return value.length > 42 ? `${value.slice(0, 24)}...${value.slice(-12)}` : value;
-}
 
 function SourceLine({ item, lang }: { item: ThreatIndicator; lang: Language }) {
   return (
     <div className="grid gap-2 border-b border-line/40 px-4 py-3 last:border-b-0 md:grid-cols-[auto_1fr_auto] md:items-center">
       <SeverityBadge severity={item.severity} lang={lang} />
       <div className="min-w-0">
-        <div className="truncate font-mono text-[12px] text-sky-300" title={item.indicator}>
-          {compact(item.indicator)}
+        <div className="break-all font-mono text-[12px] text-sky-300">
+          {item.indicator}
         </div>
-        <div className="mt-1 truncate text-xs text-slate-500">
+        <div className="mt-1 break-words text-xs text-slate-500">
           {SOURCE_LABELS[item.source]} · {TYPE_LABELS[item.type]}
           {item.confidence !== undefined ? ` · C${item.confidence}` : ''}
         </div>
@@ -364,7 +361,7 @@ export function IocInvestigationPanel({
                           }}
                           className="block min-h-10 w-full rounded border border-line/70 bg-panel-2 px-2 py-1 text-left text-xs text-slate-400 hover:bg-white/5"
                         >
-                          <span className="font-mono text-sky-300">{compact(item.indicator)}</span>
+                            <span className="break-all font-mono text-sky-300">{item.indicator}</span>
                           <span className="ml-2">{POSTURE_LABEL[lang][item.posture]}</span>
                           <span className="ml-2 text-slate-500">{shortTime(item.ts)}</span>
                         </button>
@@ -378,26 +375,7 @@ export function IocInvestigationPanel({
             <div>
               {enrichment && (
                 <div className="border-b border-line/50 px-4 py-3">
-                  <div className="text-xs font-semibold text-slate-400">{t.enrichment}</div>
-                  <div className="mt-2 grid gap-2 md:grid-cols-3">
-                    {enrichment.results.length > 0 ? (
-                      enrichment.results.map((item) => (
-                        <div key={item.provider} className="rounded border border-line/70 bg-panel-2 p-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-semibold capitalize text-slate-200">{item.provider}</span>
-                            <span className={item.ok ? 'text-xs text-emerald-300' : 'text-xs text-red-300'}>
-                              {item.ok ? t.ok : t.failed}
-                            </span>
-                          </div>
-                          <div className="mt-1 max-h-16 overflow-hidden break-all text-[11px] text-slate-500">
-                            {item.ok ? JSON.stringify(item.summary) : item.error}
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="text-xs text-slate-500">{t.noEnrichmentProviders}</div>
-                    )}
-                  </div>
+                  <EnrichmentAggregatePanel enrichment={enrichment} lang={lang} />
                 </div>
               )}
               {result.model.scenarios.map((scenario) => (

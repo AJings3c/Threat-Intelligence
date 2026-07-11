@@ -1,5 +1,5 @@
 import type { FetchResult, Severity, ThreatIndicator } from '../types.js';
-import { fetchWithTimeout, errorMessage } from '../util.js';
+import { fetchWithRetry, errorMessage } from '../util.js';
 
 const DSHIELD_BLOCK_URL = 'https://isc.sans.edu/block.txt';
 const IPV4_RE = /^(?:\d{1,3}\.){3}\d{1,3}$/;
@@ -62,7 +62,7 @@ export function parseDShieldBlockFeed(text: string, limit = 200): ThreatIndicato
 export async function fetchDShield(limit = 200): Promise<FetchResult<ThreatIndicator>> {
   const fetchedAt = Date.now();
   try {
-    const res = await fetchWithTimeout(
+    const res = await fetchWithRetry(
       DSHIELD_BLOCK_URL,
       { headers: { Accept: 'text/plain' } },
       25_000,

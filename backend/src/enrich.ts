@@ -5,7 +5,7 @@ import type {
   IndicatorType,
   ProviderConfigStatus,
 } from './types.js';
-import { errorMessage, fetchWithTimeout } from './util.js';
+import { errorMessage, fetchWithRetry, fetchWithTimeout } from './util.js';
 
 function urlSafeBase64(value: string): string {
   return Buffer.from(value)
@@ -55,7 +55,7 @@ export async function enrichVirusTotal(
       /\/+$/,
       '',
     );
-    const res = await fetchWithTimeout(`${base}${path}`, { headers: { 'x-apikey': apiKey } }, 30_000);
+    const res = await fetchWithRetry(`${base}${path}`, { headers: { 'x-apikey': apiKey } }, 30_000);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = (await res.json()) as Record<string, unknown>;
     const data = objectRecord(json.data);
@@ -84,7 +84,7 @@ export async function enrichShodan(indicator: string, type: IndicatorType): Prom
   try {
     const base = (process.env.SHODAN_API_BASE?.trim() || 'https://api.shodan.io/shodan/host').replace(/\/+$/, '');
     const params = new URLSearchParams({ key: apiKey });
-    const res = await fetchWithTimeout(`${base}/${encodeURIComponent(indicator)}?${params.toString()}`, {}, 30_000);
+    const res = await fetchWithRetry(`${base}/${encodeURIComponent(indicator)}?${params.toString()}`, {}, 30_000);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as Record<string, unknown>;
     return {
@@ -115,7 +115,7 @@ export async function enrichCensys(indicator: string, type: IndicatorType): Prom
       '',
     );
     const auth = Buffer.from(`${apiId}:${apiSecret}`).toString('base64');
-    const res = await fetchWithTimeout(
+    const res = await fetchWithRetry(
       `${base}/${encodeURIComponent(indicator)}`,
       { headers: { Authorization: `Basic ${auth}` } },
       30_000,
@@ -148,6 +148,109 @@ export async function enrichCensys(indicator: string, type: IndicatorType): Prom
   }
 }
 
+export async function enrichGreyNoise(indicator: string, type: IndicatorType): Promise<EnrichmentResult | null> {
+  const apiKey = process.env.GREYNOISE_API_KEY?.trim();
+  if (!apiKey || type !== 'ip') return null;
+  try {
+    const base = (process.env.GREYNOISE_API_BASE?.trim() || 'https://api.greynoise.io/v3/community').replace(
+      /\/+$/,
+      '',
+    );
+    const res = await fetchWithRetry(
+      `${base}/${encodeURIComponent(indicator)}`,
+      { headers: { key: apiKey } },
+      30_000,
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = (await res.json()) as Record<string, unknown>;
+    return {
+      provider: 'greynoise',
+      ok: true,
+      error: null,
+      summary: {
+        noise: data.noise,
+        riot: data.riot,
+        classification: data.classification,
+        name: data.name,
+        link: data.link,
+        lastSeen: data.last_seen,
+      },
+      reference: `https://viz.greynoise.io/ip/${encodeURIComponent(indicator)}`,
+    };
+  } catch (err) {
+    return { provider: 'greynoise', ok: false, error: errorMessage(err), summary: null };
+  }
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function enrichURLScan(indicator: string, type: IndicatorType): Promise<EnrichmentResult | null> {
+  const apiKey = process.env.URLSCAN_API_KEY?.trim();
+  if (!apiKey || type !== 'url') return null;
+  try {
+    const base = (process.env.URLSCAN_API_BASE?.trim() || 'https://urlscan.io/api/v1').replace(/\/+$/, '');
+
+    const submitRes = await fetchWithTimeout(
+      `${base}/scan/`,
+      {
+        method: 'POST',
+        headers: {
+          'API-Key': apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url: indicator, visibility: 'private' }),
+      },
+      30_000,
+    );
+
+    if (!submitRes.ok) throw new Error(`HTTP ${submitRes.status}`);
+    const submitData = (await submitRes.json()) as Record<string, unknown>;
+    const uuid = submitData.uuid as string;
+    const apiUrl = submitData.api as string;
+
+    let resultData: Record<string, unknown> | null = null;
+    for (let i = 0; i < 6; i++) {
+      await sleep(5000);
+      const resultRes = await fetchWithRetry(apiUrl, {}, 30_000);
+      if (resultRes.status === 200) {
+        resultData = (await resultRes.json()) as Record<string, unknown>;
+        break;
+      }
+    }
+
+    if (!resultData) {
+      return { provider: 'urlscan', ok: false, error: 'Scan timeout after 30 seconds', summary: null };
+    }
+
+    const task = objectRecord(resultData.task);
+    const page = objectRecord(resultData.page);
+    const verdicts = objectRecord(resultData.verdicts);
+    const lists = objectRecord(resultData.lists);
+
+    return {
+      provider: 'urlscan',
+      ok: true,
+      error: null,
+      summary: {
+        screenshot: task.screenshotURL,
+        verdict: verdicts.overall,
+        malicious: verdicts.malicious,
+        ip: page.ip,
+        asn: page.asn,
+        country: page.country,
+        domain: page.domain,
+        urls: Array.isArray(lists.urls) ? lists.urls.slice(0, 10) : undefined,
+        certificates: Array.isArray(lists.certificates) ? lists.certificates.slice(0, 5) : undefined,
+      },
+      reference: `https://urlscan.io/result/${uuid}/`,
+    };
+  } catch (err) {
+    return { provider: 'urlscan', ok: false, error: errorMessage(err), summary: null };
+  }
+}
+
 export async function enrichIndicator(
   indicator: string,
   indicatorType: IndicatorType,
@@ -156,6 +259,8 @@ export async function enrichIndicator(
     enrichVirusTotal(indicator, indicatorType),
     enrichShodan(indicator, indicatorType),
     enrichCensys(indicator, indicatorType),
+    enrichGreyNoise(indicator, indicatorType),
+    enrichURLScan(indicator, indicatorType),
   ]);
   return {
     indicator,
@@ -194,6 +299,16 @@ export function enrichmentConfigStatus(env: NodeJS.ProcessEnv = process.env): Pr
       provider: 'censys',
       configured: Boolean(env.CENSYS_API_ID?.trim() && env.CENSYS_API_SECRET?.trim()),
       requiredEnv: ['CENSYS_API_ID', 'CENSYS_API_SECRET'],
+    },
+    {
+      provider: 'greynoise',
+      configured: Boolean(env.GREYNOISE_API_KEY?.trim()),
+      requiredEnv: ['GREYNOISE_API_KEY'],
+    },
+    {
+      provider: 'urlscan',
+      configured: Boolean(env.URLSCAN_API_KEY?.trim()),
+      requiredEnv: ['URLSCAN_API_KEY'],
     },
   ];
 }

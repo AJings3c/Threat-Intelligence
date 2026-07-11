@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import { fetchWithTimeout, errorMessage } from './util.js';
+import { fetchWithRetry, errorMessage } from './util.js';
 import { loadGeoCache, saveGeo } from './persist.js';
 
 export interface GeoInfo {
@@ -31,11 +31,8 @@ export function isIpv4(value: string): boolean {
   });
 }
 
-// ip-api.com free batch endpoint: up to 100 IPs/request, ~15 requests/min.
-// We resolve a bounded number of uncached IPs per refresh to stay well under limits.
-// A persistent cache means coverage accumulates across refreshes.
-const BATCH_SIZE = 100;
-const MAX_BATCHES = 5;
+const ONLINE_BATCH_SIZE = 10;
+const MAX_ONLINE_LOOKUPS = 100;
 
 // --- Optional offline GeoLite2 lookup (no rate limit, no plaintext HTTP) ---
 // Enabled when GEOLITE2_DB points to a MaxMind .mmdb file. Falls back to ip-api otherwise.
@@ -71,13 +68,28 @@ async function getOfflineReader(): Promise<MmdbReader | null> {
   return offlineReader;
 }
 
-interface IpApiEntry {
-  query: string;
-  status: string;
+interface OnlineGeoEntry {
+  success?: boolean;
+  query?: string;
+  ip?: string;
   country?: string;
   countryCode?: string;
+  country_code?: string;
   lat?: number;
   lon?: number;
+  latitude?: number;
+  longitude?: number;
+}
+
+function onlineLookupTemplate(): string | null {
+  const template = process.env.GEO_LOOKUP_URL?.trim();
+  if (!template || !template.includes('{ip}')) return null;
+  try {
+    const parsed = new URL(template.replace('{ip}', '192.0.2.1'));
+    return parsed.protocol === 'https:' ? template : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function geolocate(ips: string[]): Promise<Map<string, GeoInfo>> {
@@ -119,38 +131,37 @@ export async function geolocate(ips: string[]): Promise<Map<string, GeoInfo>> {
     return result;
   }
 
-  const toQuery = uncached.slice(0, BATCH_SIZE * MAX_BATCHES);
-  for (let i = 0; i < toQuery.length; i += BATCH_SIZE) {
-    const batch = toQuery.slice(i, i + BATCH_SIZE);
-    try {
-      const res = await fetchWithTimeout(
-        'http://ip-api.com/batch?fields=query,status,country,countryCode,lat,lon',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(batch),
-        },
-        20_000,
-      );
-      if (!res.ok) break;
-      const data = (await res.json()) as IpApiEntry[];
-      for (const entry of data) {
-        if (entry.status !== 'success') continue;
-        const info: GeoInfo = {
-          country: entry.country,
-          countryCode: entry.countryCode,
-          lat: entry.lat,
-          lon: entry.lon,
+  // Online lookups are opt-in and HTTPS-only. This prevents tracked IOC values
+  // from being sent over the previous plaintext fallback connection.
+  const template = onlineLookupTemplate();
+  if (!template) return result;
+  const toQuery = uncached.slice(0, MAX_ONLINE_LOOKUPS);
+  for (let i = 0; i < toQuery.length; i += ONLINE_BATCH_SIZE) {
+    const batch = toQuery.slice(i, i + ONLINE_BATCH_SIZE);
+    await Promise.all(
+      batch.map(async (ip) => {
+        try {
+          const res = await fetchWithRetry(template.replace('{ip}', encodeURIComponent(ip)), {}, 20_000);
+          if (!res.ok) return;
+          const entry = (await res.json()) as OnlineGeoEntry;
+          if (entry.success === false) return;
+          const lat = entry.lat ?? entry.latitude;
+          const lon = entry.lon ?? entry.longitude;
+          if (lat === undefined || lon === undefined) return;
+          const info: GeoInfo = {
+            country: entry.country,
+            countryCode: entry.countryCode ?? entry.country_code,
+            lat,
+            lon,
         };
-        geoCache.set(entry.query, info);
-        saveGeo(entry.query, info);
-        result.set(entry.query, info);
-      }
-    } catch (err) {
-      // Best-effort geolocation: log and continue with whatever we have.
-      console.warn(`[geo] batch failed: ${errorMessage(err)}`);
-      break;
-    }
+          geoCache.set(ip, info);
+          saveGeo(ip, info);
+          result.set(ip, info);
+        } catch (err) {
+          console.warn(`[geo] HTTPS lookup failed for ${ip}: ${errorMessage(err)}`);
+        }
+      }),
+    );
   }
 
   return result;

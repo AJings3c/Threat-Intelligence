@@ -16,6 +16,8 @@
   <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo" width="240" />
 </p>
 
+See [`docs/REMEDIATION_STATUS.md`](docs/REMEDIATION_STATUS.md) for the code-backed control status and capabilities that require a separate architecture decision.
+
 ## Feature Gallery
 
 <table>
@@ -69,7 +71,7 @@ The interface is built as an **Evidence Command Workbench**: a dense, operator-f
 - IOC summary for domains, IPs, URLs, hashes, CIDR ranges, and CVEs.
 - Local evidence-backed STRIDE scenarios, DREAD scoring, mitigations, next steps, Markdown/JSON reports, and summary history.
 - Architecture-level threat modeling with assets, trust boundaries, data flows, attack paths, controls, and a Graph/List explorer.
-- STIX 2.1 export and a read-only TAXII 2.1 API.
+- STIX 2.1 export and a read-only TAXII 2.1 API; external TAXII imports preserve relationships, entities, markings, and object versions while extracting IOC/CVE records for search.
 
 The platform does not invent threat sources. Threat models and graphs are derived from the project data sources, local evidence, configuration state, and backend APIs.
 
@@ -78,10 +80,18 @@ The platform does not invent threat sources. Threat models and graphs are derive
 | Workspace | Purpose |
 | --- | --- |
 | **Overview** | Source health, stats, map, CVE panel, trend panel, and Hash/Malware overview. |
+| **Hunt** | Single or batch IOC searches, CSV export, query timing, and durable hunt history. |
+| **Cases** | Create investigation cases and maintain severity, state, indicators, and analyst comments. |
+| **Rules & Automation** | Configure IOC-match or threshold rules, webhook/auto-enrichment actions, and inspect execution history. |
+| **Quality** | Quality distribution, 30-day trend, time decay, and false-positive tracking. |
+| **Network** | Explore relationships between sources, indicators, and evidence as a graph. |
+| **Timeline** | Replay intelligence events over time with speed and previous/next controls. |
+| **Heatmap** | Review country distribution, average severity, and top-risk locations. |
 | **Sources & Config** | Source matrix, configuration status, source tests, enrichment provider tests, and notification test controls. |
 | **IOC Summary** | IOC command, exact matches, related indicators, enrichment, STRIDE scenarios, mitigations, report export, and source-backed graph. |
 | **Threat Modeling** | Architecture model, DFD-style graph, STRIDE/DREAD explorer, assets, flows, controls, and attack paths. |
 | **Intel Feed** | Sticky filters, threat table, row selection, details side panel, and external references. |
+| **Operations & Exchange** | Text IOC extraction, STIX objects and graphs, detection artifacts, jobs, audit, and metrics. |
 
 ### Themes, Logo, and Brand Assets
 
@@ -121,6 +131,7 @@ The previous icon set has been removed.
 | AbuseIPDB | High-confidence abusive IPv4 blacklist | `ABUSEIPDB_API_KEY` |
 | AlienVault OTX | Indicators from subscribed pulses | `OTX_API_KEY` |
 | External TAXII | STIX 2.1 objects from an external TAXII collection | `TAXII_IMPORT_OBJECTS_URL` |
+| MISP | Published, IDS-eligible MISP attributes with read-only paged incremental import | `MISP_BASE_URL` + `MISP_API_KEY` |
 | VirusTotal | On-demand observable enrichment | `VIRUSTOTAL_API_KEY` |
 | Shodan | On-demand IP enrichment | `SHODAN_API_KEY` |
 | Censys | On-demand host enrichment | `CENSYS_API_ID`, `CENSYS_API_SECRET` |
@@ -151,9 +162,10 @@ threat-intel-platform/
 Backend:
 
 - Express + TypeScript API.
-- Startup refresh plus periodic refresh, default `REFRESH_INTERVAL_MS=900000`.
+- Startup refresh plus durable queued refresh jobs, default `REFRESH_INTERVAL_MS=900000`.
 - Per-source refresh intervals to avoid over-fetching slow feeds.
-- Optional SQLite persistence when `DATA_DIR` is set.
+- `DATA_DIR` persists IOC/CVE snapshots, historical objects, observations, the original versioned STIX graph, MISP detection artifacts, cases, rules, audit, and background jobs.
+- Background jobs have leases, deduplication, retries, exponential backoff, and dead-letter status.
 - SSE stream at `/api/stream` for live refresh updates.
 
 Frontend:
@@ -205,7 +217,7 @@ When `frontend/dist` exists, the backend serves the built frontend and API from 
 | `npm run build` | Build backend and frontend. |
 | `npm run typecheck` | Type-check both workspaces. |
 | `npm run lint` | Lint both workspaces. |
-| `npm run test` | Run backend tests. |
+| `npm run test` | Run backend, frontend, and Python tests. |
 | `npm start` | Start the compiled backend and serve frontend build if present. |
 
 ### REST API
@@ -233,6 +245,11 @@ When `frontend/dist` exists, the backend serves the built frontend and API from 
 | `GET /api/notify/status` | Notification configuration and last-run status. |
 | `POST /api/notify/test` | Send a test digest to configured channels. Requires admin role and may require `NOTIFY_TEST_TOKEN`. |
 | `GET /api/audit` | Recent audit events when persistence is enabled. Requires admin role. |
+| `GET /api/metrics` | Prometheus text metrics for intelligence counts, source health, refresh, persistence, and jobs. Requires viewer role. |
+| `GET /api/detection-artifacts` | Query imported MISP Sigma/YARA/Snort artifacts; stored for review and never executed automatically. Requires analyst role and persistence. |
+| `GET /api/stix/objects` | Query TLP-filtered STIX entities and versions by `type`/`id`. Requires analyst role. |
+| `GET /api/stix/graph/:id` | Query a STIX relationship neighborhood with `depth` bounded to 0-3. Requires analyst role. |
+| `POST /api/extract-iocs` | Deterministically extract/refang URL, domain, IP, hash, and CVE values from email/ticket/news text and flag local matches. Requires analyst role. |
 
 TAXII endpoints:
 
@@ -284,7 +301,7 @@ curl -X POST http://localhost:4000/api/notify/test
 
 ### Security and Access Control
 
-Authentication is optional for private/local deployments.
+Authentication is optional in development. Production fails closed unless role tokens or a trusted authentication proxy are configured; `ALLOW_INSECURE_NO_AUTH=true` is an explicit unsafe escape hatch.
 
 When tokens are configured:
 
@@ -294,13 +311,18 @@ When tokens are configured:
 - Analyst routes cover summary, enrichment, report generation, and threat modeling.
 - Admin routes cover integration tests, notification tests, and audit access.
 
+STIX/TAXII exports also enforce TLP distribution: viewer is capped at GREEN, analyst at AMBER, and admin can access RED or unknown custom markings. Relationships left dangling by filtering are removed.
+
 Tokens can be passed as:
 
 - `Authorization: Bearer <token>`
 - `x-api-token: <token>`
-- `?token=<token>`
+
+For production browser deployments, use a same-origin OIDC/SAML/SSO proxy and configure `AUTH_PROXY_ENABLED` plus `AUTH_PROXY_SHARED_SECRET`. Never expose the proxy secret or a production API token in a browser bundle.
 
 Use `CORS_ORIGINS`, `API_RATE_LIMIT_WINDOW_MS`, `API_RATE_LIMIT_MAX`, and `JSON_BODY_LIMIT` for browser deployments and request safety.
+
+STIX, TAXII, and Markdown exports always return `Content-Digest` and `X-Content-SHA256`. Configuring `EXPORT_SIGNING_KEY` also emits `X-Content-HMAC-SHA256`; `EXPORT_SIGNING_KEY_ID` identifies a rotated key without exposing it.
 
 ### Alerting
 
@@ -320,19 +342,24 @@ The notifier primes its baseline on startup, so the first digest only contains n
 | `PORT` | `4000` | Backend port. |
 | `REFRESH_INTERVAL_MS` | `900000` | Feed refresh interval. |
 | `REFRESH_<SOURCE>_INTERVAL_MS` | Source default | Per-source minimum refresh interval override. |
-| `DATA_DIR` | Empty | Enables SQLite persistence for geo cache, trends, audit, push events, and summary history. |
+| `DATA_DIR` | Empty | Enables SQLite persistence for IOC/CVE snapshots, historical objects, observations, versioned STIX graphs, jobs, cases, rules, audit, notifications, and trends. |
 | `VITE_API_BASE` | Empty | Frontend API base. Empty means same-origin or dev proxy. |
 | `VITE_API_PROXY` | `http://localhost:4000` | Vite dev proxy target for `/api`. |
-| `VITE_API_TOKEN` | Empty | Token attached by the frontend when API auth is enabled. It is embedded in the built bundle. |
+| `VITE_API_TOKEN` | Empty | Local/isolated use only. It is embedded in the bundle; production browsers should use the trusted auth proxy. |
 | `API_TOKEN` | Empty | Admin API token. |
 | `API_VIEWER_TOKENS` / `API_ANALYST_TOKENS` / `API_ADMIN_TOKENS` | Empty | Role-scoped token lists. |
+| `AUTH_PROXY_ENABLED` / `AUTH_PROXY_SHARED_SECRET` | `false` / Empty | Trust user and role headers injected by a same-origin authentication proxy. |
 | `CORS_ORIGINS` | Empty | Browser origin allow-list. |
+| `EXPORT_SIGNING_KEY` / `EXPORT_SIGNING_KEY_ID` | Empty | Adds HMAC-SHA256 signing and a non-secret key identifier to STIX/TAXII/Markdown exports; SHA-256 digests are always emitted. |
+| `ENRICH_CIRCUIT_FAILURE_THRESHOLD` / `ENRICH_CIRCUIT_COOLDOWN_MS` | `3` / `60000` | Per-provider enrichment circuit threshold and cooldown; only successful results are cached for one hour. |
 | `NVD_API_KEY` | Empty | Optional NVD rate-limit increase. |
 | `GEOLITE2_DB` | Empty | Optional offline MaxMind GeoLite2 database path. |
+| `GEO_LOOKUP_URL` | Empty | Optional HTTPS point-lookup template containing `{ip}`; no IOC is sent to a third party by default. |
 | `PHISHTANK_APP_KEY` | Empty | Enables PhishTank feed. |
 | `ABUSEIPDB_API_KEY` | Empty | Enables AbuseIPDB feed. |
 | `OTX_API_KEY` | Empty | Enables AlienVault OTX pulse import. |
 | `TAXII_IMPORT_OBJECTS_URL` | Empty | Enables external TAXII object import. |
+| `MISP_BASE_URL` / `MISP_API_KEY` | Empty | Enables HTTPS-only read-only MISP Attribute import; data defaults to TLP:AMBER. |
 | `VIRUSTOTAL_API_KEY` | Empty | Enables VirusTotal enrichment. |
 | `SHODAN_API_KEY` | Empty | Enables Shodan enrichment. |
 | `CENSYS_API_ID` / `CENSYS_API_SECRET` | Empty | Enables Censys enrichment. |

@@ -31,12 +31,15 @@ import { fetchDShield } from './sources/dshield.js';
 import { fetchPhishTank } from './sources/phishtank.js';
 import { fetchAbuseIpDb } from './sources/abuseipdb.js';
 import { fetchOtx } from './sources/otx.js';
+import { fetchMisp } from './sources/misp.js';
 import { fetchTaxiiImport } from './sources/taxiiImport.js';
 import { geolocate, isIpv4 } from './geo.js';
 import { dedupeIndicators } from './correlate.js';
 import {
   getInvestigationHistory as getPersistedInvestigationHistory,
   isPersistEnabled,
+  loadIntelSnapshot,
+  persistIntelSnapshot,
   recordInvestigationHistory,
   recordSeen,
   recordSnapshot,
@@ -69,6 +72,7 @@ export const SOURCE_LABELS: Record<ThreatSource, string> = {
   phishtank: 'PhishTank',
   abuseipdb: 'AbuseIPDB',
   otx: 'AlienVault OTX',
+  misp: 'MISP',
   taxii_import: 'External TAXII',
 };
 
@@ -94,6 +98,7 @@ export const DEFAULT_SOURCE_REFRESH_INTERVAL_MS: Record<ThreatSource, number> = 
   phishtank: HOUR,
   abuseipdb: 2 * HOUR,
   otx: HOUR,
+  misp: HOUR,
   taxii_import: HOUR,
 };
 
@@ -112,6 +117,7 @@ function emptyIocItems(): Record<IocSource, ThreatIndicator[]> {
     phishtank: [],
     abuseipdb: [],
     otx: [],
+    misp: [],
     taxii_import: [],
   };
 }
@@ -132,6 +138,7 @@ function emptySourceState(): Record<ThreatSource, SourceState> {
     phishtank: { fetchedAt: null, error: null, count: 0 },
     abuseipdb: { fetchedAt: null, error: null, count: 0 },
     otx: { fetchedAt: null, error: null, count: 0 },
+    misp: { fetchedAt: null, error: null, count: 0 },
     taxii_import: { fetchedAt: null, error: null, count: 0 },
   };
 }
@@ -166,6 +173,7 @@ const IOC_DESCRIPTORS: IocDescriptor[] = [
   { source: 'phishtank', fetch: fetchPhishTank },
   { source: 'abuseipdb', fetch: fetchAbuseIpDb },
   { source: 'otx', fetch: fetchOtx },
+  { source: 'misp', fetch: fetchMisp },
   { source: 'taxii_import', fetch: fetchTaxiiImport },
 ];
 
@@ -203,6 +211,30 @@ class ThreatStore {
     return this.lastRefresh > 0;
   }
 
+  hydrateFromPersistence(): void {
+    const snapshot = loadIntelSnapshot();
+    if (snapshot.savedAt <= 0 || (snapshot.indicators.length === 0 && snapshot.cves.length === 0)) return;
+
+    this.indicators = snapshot.indicators;
+    this.cves = snapshot.cves;
+    this.iocItems = emptyIocItems();
+    this.state = emptySourceState();
+    for (const indicator of snapshot.indicators) {
+      for (const source of indicator.sources ?? [indicator.source]) {
+        if (source === 'nvd') continue;
+        this.iocItems[source].push({ ...indicator, source });
+      }
+    }
+    for (const descriptor of IOC_DESCRIPTORS) {
+      const count = this.iocItems[descriptor.source].length;
+      if (count > 0) this.state[descriptor.source] = { fetchedAt: snapshot.savedAt, error: null, count };
+    }
+    if (snapshot.cves.length > 0) {
+      this.state.nvd = { fetchedAt: snapshot.savedAt, error: null, count: snapshot.cves.length };
+    }
+    this.lastRefresh = snapshot.savedAt;
+  }
+
   async refresh(): Promise<void> {
     if (this.refreshing) return;
     this.refreshing = true;
@@ -238,6 +270,7 @@ class ThreatStore {
         ...this.iocItems.phishtank,
         ...this.iocItems.abuseipdb,
         ...this.iocItems.otx,
+        ...this.iocItems.misp,
         ...this.iocItems.taxii_import,
       ]);
       await this.enrichGeo(indicators);
@@ -246,11 +279,11 @@ class ThreatStore {
       // Cross-mark CVEs already in CISA KEV as known-exploited.
       this.correlateKev();
 
-      // Persist first/last-seen + a trend snapshot (no-op unless DATA_DIR is set).
+      // Persist first/last-seen, the complete normalized snapshot, and trend data.
       this.persistObservations();
       this.persistSourceHealth();
-
       this.lastRefresh = Date.now();
+      persistIntelSnapshot(this.indicators, this.cves, this.lastRefresh);
     } finally {
       this.refreshing = false;
     }

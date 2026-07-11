@@ -8,6 +8,7 @@ import { fetchPhishTank, parsePhishTankFeed } from '../src/sources/phishtank.js'
 import { fetchAbuseIpDb, parseAbuseIpDbBlacklist } from '../src/sources/abuseipdb.js';
 import { fetchOtx, parseOtxPulses } from '../src/sources/otx.js';
 import { fetchTaxiiImport, parseTaxiiObjects } from '../src/sources/taxiiImport.js';
+import { fetchMisp, parseMispAttributes, parseMispDetectionArtifacts } from '../src/sources/misp.js';
 import { fetchNvd } from '../src/sources/nvd.js';
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -31,6 +32,11 @@ afterEach(() => {
   delete process.env.TAXII_IMPORT_ADDED_AFTER;
   delete process.env.TAXII_IMPORT_PAGE_LIMIT;
   delete process.env.TAXII_IMPORT_MAX_PAGES;
+  delete process.env.MISP_BASE_URL;
+  delete process.env.MISP_API_KEY;
+  delete process.env.MISP_PAGE_LIMIT;
+  delete process.env.MISP_MAX_PAGES;
+  delete process.env.MISP_IMPORT_TIMESTAMP;
 });
 
 describe('parseOpenPhishFeed', () => {
@@ -341,6 +347,97 @@ describe('optional OTX/TAXII sources', () => {
     expect(result.items.map((item) => item.indicator)).toEqual(['a.example', 'b.example']);
     expect(calls[0]).toContain('added_after=2026-06-08T00%3A00%3A00.000Z');
     expect(calls[1]).toContain('next=cursor-1');
+  });
+});
+
+describe('MISP source', () => {
+  it('maps supported attributes without inventing unsupported rule observables', () => {
+    const items = parseMispAttributes({
+      Attribute: [
+        {
+          id: '10',
+          event_id: '20',
+          type: 'domain|ip',
+          category: 'Network activity',
+          value: 'evil.example|198.51.100.44',
+          timestamp: '1783728000',
+          to_ids: true,
+          Tag: [{ name: 'tlp:amber' }, { name: 'phishing' }],
+        },
+        { id: '11', type: 'sigma', value: 'title: detection rule' },
+      ],
+    }, 'https://misp.example');
+
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({ source: 'misp', indicator: 'evil.example', indicatorType: 'domain' });
+    expect(items[1]).toMatchObject({ source: 'misp', indicator: '198.51.100.44', indicatorType: 'ip' });
+    expect(items[0].reference).toBe('https://misp.example/events/view/20');
+    expect(items[0].tags).toContain('tlp:amber');
+  });
+
+  it('preserves Sigma, YARA, and Snort attributes as non-executable detection artifacts', () => {
+    const artifacts = parseMispDetectionArtifacts(
+      {
+        Attribute: [
+          { id: '1', event_id: '20', type: 'sigma', value: 'title: Test Sigma' },
+          { id: '2', type: 'yara', value: 'rule test { condition: true }' },
+          { id: '3', type: 'snort', value: 'alert tcp any any -> any any (sid:1;)' },
+          { id: '4', type: 'domain', value: 'not-a-rule.example' },
+        ],
+      },
+      'https://misp.example',
+    );
+
+    expect(artifacts.map((artifact) => artifact.format)).toEqual(['sigma', 'yara', 'snort']);
+    expect(artifacts[0]).toMatchObject({
+      source: 'misp',
+      content: 'title: Test Sigma',
+      reference: 'https://misp.example/events/view/20',
+    });
+  });
+
+  it('imports MISP attributes with HTTPS, authentication, and bounded pagination', async () => {
+    process.env.MISP_BASE_URL = 'https://misp.example';
+    process.env.MISP_API_KEY = 'misp-secret';
+    process.env.MISP_PAGE_LIMIT = '2';
+    process.env.MISP_MAX_PAGES = '3';
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        requests.push({ url, init });
+        const page = JSON.parse(String(init?.body)).page as number;
+        return jsonResponse({
+          response: {
+            Attribute:
+              page === 1
+                ? [
+                    { id: '1', type: 'domain', value: 'one.example' },
+                    { id: '2', type: 'ip-dst', value: '203.0.113.2' },
+                  ]
+                : [{ id: '3', type: 'sha256', value: 'a'.repeat(64) }],
+          },
+        });
+      }),
+    );
+
+    const result = await fetchMisp(10);
+
+    expect(result.error).toBeNull();
+    expect(result.items).toHaveLength(3);
+    expect(requests).toHaveLength(2);
+    expect(requests[0].url).toBe('https://misp.example/attributes/restSearch');
+    expect((requests[0].init?.headers as Record<string, string>).Authorization).toBe('misp-secret');
+  });
+
+  it('rejects plaintext MISP endpoints before sending credentials', async () => {
+    process.env.MISP_BASE_URL = 'http://misp.example';
+    process.env.MISP_API_KEY = 'misp-secret';
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchMisp()).resolves.toMatchObject({ items: [], error: 'MISP_BASE_URL must use HTTPS' });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

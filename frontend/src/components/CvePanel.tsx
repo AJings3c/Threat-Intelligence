@@ -34,7 +34,7 @@ export function CvePanel({ cves, loading, lang }: { cves: CveItem[]; loading: bo
                 EPSS {(c.epssScore * 100).toFixed(2)}% · P{Math.round((c.epssPercentile ?? 0) * 100)}
               </div>
             )}
-            <p className="mt-1 line-clamp-2 text-xs text-slate-400">{c.description}</p>
+            <p className="mt-1 break-words text-xs leading-5 text-slate-400">{c.description}</p>
           </a>
         ))}
         {!loading && cves.length === 0 && (

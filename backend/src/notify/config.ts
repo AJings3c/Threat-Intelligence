@@ -47,6 +47,7 @@ function parseSources(value: string | undefined): ThreatSource[] | null {
     'phishtank',
     'abuseipdb',
     'otx',
+    'misp',
     'taxii_import',
   ];
   const parsed = value

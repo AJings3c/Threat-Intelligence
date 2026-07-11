@@ -43,6 +43,9 @@ vi.mock('../src/sources/abuseipdb.js', () => ({
 vi.mock('../src/sources/otx.js', () => ({
   fetchOtx: vi.fn(),
 }));
+vi.mock('../src/sources/misp.js', () => ({
+  fetchMisp: vi.fn(),
+}));
 vi.mock('../src/sources/taxiiImport.js', () => ({
   fetchTaxiiImport: vi.fn(),
 }));
@@ -66,6 +69,7 @@ import { fetchDShield } from '../src/sources/dshield.js';
 import { fetchPhishTank } from '../src/sources/phishtank.js';
 import { fetchAbuseIpDb } from '../src/sources/abuseipdb.js';
 import { fetchOtx } from '../src/sources/otx.js';
+import { fetchMisp } from '../src/sources/misp.js';
 import { fetchTaxiiImport } from '../src/sources/taxiiImport.js';
 import type { ThreatIndicator, CveItem, FetchResult } from '../src/types.js';
 
@@ -83,6 +87,7 @@ const mockDShield = fetchDShield as ReturnType<typeof vi.fn>;
 const mockPhishTank = fetchPhishTank as ReturnType<typeof vi.fn>;
 const mockAbuseIpDb = fetchAbuseIpDb as ReturnType<typeof vi.fn>;
 const mockOtx = fetchOtx as ReturnType<typeof vi.fn>;
+const mockMisp = fetchMisp as ReturnType<typeof vi.fn>;
 const mockTaxiiImport = fetchTaxiiImport as ReturnType<typeof vi.fn>;
 
 // Distinct indicator value per id so cross-source dedup keeps them separate.
@@ -133,6 +138,8 @@ beforeEach(() => {
   delete process.env.PHISHTANK_APP_KEY;
   delete process.env.ABUSEIPDB_API_KEY;
   delete process.env.OTX_API_KEY;
+  delete process.env.MISP_BASE_URL;
+  delete process.env.MISP_API_KEY;
   delete process.env.TAXII_IMPORT_OBJECTS_URL;
   mockX.mockResolvedValue(ok([]));
   mockFacebook.mockResolvedValue(ok([]));
@@ -144,6 +151,7 @@ beforeEach(() => {
   mockPhishTank.mockResolvedValue(ok([]));
   mockAbuseIpDb.mockResolvedValue(ok([]));
   mockOtx.mockResolvedValue(ok([]));
+  mockMisp.mockResolvedValue(ok([]));
   mockTaxiiImport.mockResolvedValue(ok([]));
 });
 

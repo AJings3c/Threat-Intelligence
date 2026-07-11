@@ -13,6 +13,7 @@ export type ThreatSource =
   | 'phishtank'
   | 'abuseipdb'
   | 'otx'
+  | 'misp'
   | 'taxii_import';
 export type ThreatType =
   | 'c2_server'
@@ -30,7 +31,7 @@ export type Severity = 'low' | 'medium' | 'high' | 'critical';
 export type Tlp = 'clear' | 'green' | 'amber' | 'red';
 export type SourceReliability = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 export type SourceHealthStatus = 'healthy' | 'disabled' | 'warming' | 'error' | 'stale' | 'deprecated';
-export type EnrichmentProvider = 'virustotal' | 'shodan' | 'censys';
+export type EnrichmentProvider = 'virustotal' | 'shodan' | 'censys' | 'greynoise' | 'urlscan';
 export type IntegrationKind = 'source' | 'provider';
 export type IntegrationTestStatus = 'ok' | 'missing_config' | 'failed' | 'unsupported';
 export type Language = 'en' | 'zh';
@@ -398,4 +399,52 @@ export interface ArchitectureThreatModel {
   controls: ThreatModelControl[];
   assumptions: string[];
   nextSteps: string[];
+}
+
+export type RuleTriggerType = 'ioc_match' | 'threshold';
+export type RuleActionType = 'webhook' | 'enrich';
+
+export interface RuleExecution {
+  id: string;
+  ruleId: string;
+  triggeredAt: number;
+  actionsTaken: RuleAction[];
+  success: boolean;
+}
+
+export interface DetectionArtifact {
+  id: string;
+  source: ThreatSource;
+  format: 'sigma' | 'yara' | 'snort';
+  content: string;
+  title: string;
+  description?: string;
+  tags: string[];
+  reference?: string;
+  firstSeen?: string;
+  lastSeen?: string;
+}
+
+export interface StixObject {
+  type: string;
+  spec_version: '2.1';
+  id: string;
+  created?: string;
+  modified?: string;
+  [key: string]: unknown;
+}
+
+export interface RuleAction {
+  type: RuleActionType;
+  config: Record<string, unknown>;
+}
+
+export interface Rule {
+  id: string;
+  name: string;
+  triggerType: RuleTriggerType;
+  triggerConfig: Record<string, unknown>;
+  actions: RuleAction[];
+  enabled: boolean;
+  createdAt: number;
 }

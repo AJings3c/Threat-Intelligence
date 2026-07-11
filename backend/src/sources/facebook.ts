@@ -1,5 +1,5 @@
 import type { FetchResult, ThreatIndicator } from '../types.js';
-import { errorMessage, fetchWithTimeout } from '../util.js';
+import { errorMessage, fetchWithRetry } from '../util.js';
 import { clampLimit, headline, parseIsoTime, scoreSocialText } from './social.js';
 
 interface FacebookPost {
@@ -45,7 +45,7 @@ export async function fetchFacebookPages(): Promise<FetchResult<ThreatIndicator>
         limit: String(limit),
         access_token: accessToken,
       });
-      const res = await fetchWithTimeout(
+      const res = await fetchWithRetry(
         `${apiBase}/${graphVersion}/${encodeURIComponent(pageId)}/posts?${params.toString()}`,
         {},
         30_000,

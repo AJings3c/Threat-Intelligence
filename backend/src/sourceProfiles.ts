@@ -46,6 +46,13 @@ export const SOURCE_PROFILES: Record<ThreatSource, SourceProfile> = {
     requiredEnv: ['ABUSEIPDB_API_KEY'],
   },
   otx: { reliability: 'B', tlp: 'clear', confidenceWeight: 16, credentialed: true, requiredEnv: ['OTX_API_KEY'] },
+  misp: {
+    reliability: 'B',
+    tlp: 'amber',
+    confidenceWeight: 18,
+    credentialed: true,
+    requiredEnv: ['MISP_BASE_URL', 'MISP_API_KEY'],
+  },
   taxii_import: {
     reliability: 'C',
     tlp: 'clear',

@@ -1,5 +1,5 @@
 import type { ThreatIndicator, FetchResult } from '../types.js';
-import { fetchWithTimeout, errorMessage } from '../util.js';
+import { fetchWithRetry, errorMessage } from '../util.js';
 
 const FEODO_URL = 'https://feodotracker.abuse.ch/downloads/ipblocklist.json';
 
@@ -19,7 +19,7 @@ interface FeodoEntry {
 export async function fetchFeodo(limit = 1000): Promise<FetchResult<ThreatIndicator>> {
   const fetchedAt = Date.now();
   try {
-    const res = await fetchWithTimeout(FEODO_URL);
+    const res = await fetchWithRetry(FEODO_URL);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as FeodoEntry[];
 

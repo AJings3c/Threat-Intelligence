@@ -1,5 +1,5 @@
 import type { ThreatIndicator, FetchResult } from '../types.js';
-import { fetchWithTimeout, errorMessage } from '../util.js';
+import { fetchWithRetry, errorMessage } from '../util.js';
 
 const URLHAUS_URL = 'https://urlhaus.abuse.ch/downloads/json_recent/';
 
@@ -20,7 +20,7 @@ type UrlhausResponse = Record<string, UrlhausEntry[]>;
 export async function fetchUrlhaus(limit = 1500): Promise<FetchResult<ThreatIndicator>> {
   const fetchedAt = Date.now();
   try {
-    const res = await fetchWithTimeout(URLHAUS_URL);
+    const res = await fetchWithRetry(URLHAUS_URL);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as UrlhausResponse;
 

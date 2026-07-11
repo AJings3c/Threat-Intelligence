@@ -18,7 +18,7 @@ export function taxiiCollection(): TaxiiCollection {
   return {
     id: TAXII_COLLECTION_ID,
     title: 'Threat Intelligence Platform Indicators',
-    description: 'Read-only STIX 2.1 indicators and vulnerabilities aggregated by this platform.',
+    description: 'Read-only STIX 2.1 graph objects and normalized intelligence aggregated by this platform.',
     can_read: true,
     can_write: false,
     media_types: [STIX_MEDIA_TYPE],
