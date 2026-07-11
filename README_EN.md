@@ -12,10 +12,6 @@
   <a href="README.md">中文</a> | <strong>EN</strong>
 </p>
 
-<p align="center">
-  <img src="frontend/public/brand-logo-dark.png" alt="Threat Intelligence Platform product logo" width="240" />
-</p>
-
 See [`docs/REMEDIATION_STATUS.md`](docs/REMEDIATION_STATUS.md) for the code-backed control status and capabilities that require a separate architecture decision.
 
 ## Feature Gallery
