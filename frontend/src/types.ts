@@ -434,6 +434,139 @@ export interface StixObject {
   [key: string]: unknown;
 }
 
+export type KnowledgeTlp = Tlp | 'unknown';
+export type KnowledgeEntityType =
+  | 'threat-actor'
+  | 'intrusion-set'
+  | 'campaign'
+  | 'malware'
+  | 'tool'
+  | 'attack-pattern'
+  | 'identity'
+  | 'vulnerability'
+  | 'infrastructure'
+  | 'indicator';
+export type KnowledgeRelationshipType =
+  | 'attributed-to'
+  | 'sponsored-by'
+  | 'uses'
+  | 'targets'
+  | 'exploits'
+  | 'indicates'
+  | 'impersonates'
+  | 'compromises'
+  | 'owns'
+  | 'hosts'
+  | 'controls'
+  | 'delivers'
+  | 'downloads'
+  | 'drops'
+  | 'communicates-with'
+  | 'consists-of'
+  | 'related-to';
+
+export interface KnowledgeSource {
+  name: string;
+  kind: 'stix' | 'taxii' | 'misp' | 'feed' | 'manual' | 'internal';
+  externalId?: string;
+  url?: string;
+  reliability?: SourceReliability;
+  collectedAt?: string;
+}
+
+export interface KnowledgeExternalReference {
+  sourceName: string;
+  externalId?: string;
+  url?: string;
+  description?: string;
+}
+
+export interface KnowledgeEvidence {
+  id: string;
+  kind: 'source-assertion' | 'sighting' | 'report' | 'analysis' | 'telemetry';
+  source: KnowledgeSource;
+  summary: string;
+  reference?: string;
+  objectRefs: string[];
+  observedAt?: string;
+  collectedAt: string;
+  confidence?: number;
+  tlp?: KnowledgeTlp;
+}
+
+export interface KnowledgeEntity {
+  id: string;
+  type: KnowledgeEntityType;
+  name: string;
+  description?: string;
+  aliases: string[];
+  externalReferences: KnowledgeExternalReference[];
+  sources: KnowledgeSource[];
+  confidence?: number;
+  tlp: KnowledgeTlp;
+  evidence: KnowledgeEvidence[];
+  stixVersion: string;
+  objectMarkingRefs: string[];
+  createdAt: string;
+  modifiedAt: string;
+  validFrom?: string;
+  validUntil?: string;
+  revoked?: boolean;
+}
+
+export interface KnowledgeRelationship {
+  id: string;
+  relationshipType: KnowledgeRelationshipType;
+  sourceRef: string;
+  targetRef: string;
+  description?: string;
+  sources: KnowledgeSource[];
+  confidence?: number;
+  tlp: KnowledgeTlp;
+  externalReferences: KnowledgeExternalReference[];
+  evidence: KnowledgeEvidence[];
+  stixVersion: string;
+  objectMarkingRefs: string[];
+  createdAt: string;
+  modifiedAt: string;
+  validFrom?: string;
+  validUntil?: string;
+  revoked?: boolean;
+}
+
+export interface KnowledgeSighting {
+  id: string;
+  entityRef: string;
+  indicatorRef?: string;
+  firstSeen: string;
+  lastSeen: string;
+  count: number;
+  sources: KnowledgeSource[];
+  confidence?: number;
+  tlp: KnowledgeTlp;
+  externalReferences: KnowledgeExternalReference[];
+  evidence: KnowledgeEvidence[];
+  stixVersion: string;
+  objectMarkingRefs: string[];
+  createdAt: string;
+  modifiedAt: string;
+}
+
+export interface KnowledgeEntityPage {
+  entities: KnowledgeEntity[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface KnowledgeGraph {
+  rootId: string;
+  depth: number;
+  entities: KnowledgeEntity[];
+  relationships: KnowledgeRelationship[];
+  sightings: KnowledgeSighting[];
+}
+
 export interface RuleAction {
   type: RuleActionType;
   config: Record<string, unknown>;

@@ -76,6 +76,7 @@ The platform does not invent threat sources. Threat models and graphs are derive
 | Workspace | Purpose |
 | --- | --- |
 | **Overview** | Source health, stats, map, CVE panel, trend panel, and Hash/Malware overview. |
+| **Threat Knowledge** | Search actors, intrusion sets, campaigns, malware, attack patterns, infrastructure, and indicators, then verify sources, TLP, external references, and evidence along the relationship graph. |
 | **Hunt** | Single or batch IOC searches, CSV export, query timing, and durable hunt history. |
 | **Cases** | Create investigation cases and maintain severity, state, indicators, and analyst comments. |
 | **Rules & Automation** | Configure IOC-match or threshold rules, webhook/auto-enrichment actions, and inspect execution history. |
@@ -160,7 +161,7 @@ Backend:
 - Express + TypeScript API.
 - Startup refresh plus durable queued refresh jobs, default `REFRESH_INTERVAL_MS=900000`.
 - Per-source refresh intervals to avoid over-fetching slow feeds.
-- `DATA_DIR` persists IOC/CVE snapshots, historical objects, observations, the original versioned STIX graph, MISP detection artifacts, cases, rules, audit, and background jobs.
+- `DATA_DIR` persists IOC/CVE snapshots, historical objects, observations, the original versioned STIX graph, the threat-knowledge projection and evidence, MISP detection artifacts, cases, rules, audit, and background jobs.
 - Background jobs have leases, deduplication, retries, exponential backoff, and dead-letter status.
 - SSE stream at `/api/stream` for live refresh updates.
 
@@ -245,6 +246,10 @@ When `frontend/dist` exists, the backend serves the built frontend and API from 
 | `GET /api/detection-artifacts` | Query imported MISP Sigma/YARA/Snort artifacts; stored for review and never executed automatically. Requires analyst role and persistence. |
 | `GET /api/stix/objects` | Query TLP-filtered STIX entities and versions by `type`/`id`. Requires analyst role. |
 | `GET /api/stix/graph/:id` | Query a STIX relationship neighborhood with `depth` bounded to 0-3. Requires analyst role. |
+| `GET /api/knowledge/types` | Return the queryable threat-knowledge entity types. Requires viewer role; persistence is not required. |
+| `GET /api/knowledge/entities` | Search and paginate TLP-filtered threat actors, intrusion sets, campaigns, malware, tools, ATT&CK patterns, and other knowledge entities. Requires viewer role and persistence. |
+| `GET /api/knowledge/entities/:id` | Read one TLP-filtered knowledge entity by its original STIX ID. Requires viewer role and persistence. |
+| `GET /api/knowledge/entities/:id/graph` | Query a TLP-filtered neighborhood of entities, explicit relationships, and sightings with `depth` bounded to 0-3. Requires viewer role and persistence. |
 | `POST /api/extract-iocs` | Deterministically extract/refang URL, domain, IP, hash, and CVE values from email/ticket/news text and flag local matches. Requires analyst role. |
 
 TAXII endpoints:
@@ -254,6 +259,20 @@ TAXII endpoints:
 - `GET /taxii2/root/collections/`
 - `GET /taxii2/root/collections/:id/objects/`
 - `GET /taxii2/root/collections/:id/manifest/`
+
+#### Threat Knowledge Query Semantics
+
+`GET /api/knowledge/entities` accepts these query parameters:
+
+- `types`: comma-separated entity types from `/api/knowledge/types`; an unsupported type returns 400.
+- `q`: case-insensitive substring search across normalized names, aliases, and external IDs, limited to 200 characters.
+- `limit`: page size, default 100 and bounded to 1-1000; `offset`: non-negative row offset, default 0.
+
+`/api/knowledge/types` takes no query parameters and returns `{ entityTypes }`; entity detail also takes no query parameters. The list response is `{ entities, total, limit, offset }`. `:id` must be a STIX ID no longer than 200 characters and containing `--`. Graph `depth` defaults to 1 and is normalized to 0-3; the response is `{ rootId, depth, entities, relationships, sightings }`.
+
+All four Threat Knowledge endpoints require at least the viewer role. `/api/knowledge/types` works in in-memory mode; entity list, detail, and graph queries require `DATA_DIR` followed by a service restart, otherwise they return 503. Once SQLite is enabled, the service installs Threat Knowledge schema v6, backfills retained raw STIX objects, and continuously projects later STIX/TAXII imports. v6 never overwrites the first canonical payload archived for a STIX ID/version and also retains the first payload seen from each connector; a later content variant for the same ID/version is SHA-256 identified, quarantined in the conflict table, and excluded from knowledge projection. Relationships or sightings received before their endpoint entities are queued and retried when later entity imports resolve them.
+
+Knowledge queries enforce role-scoped TLP distribution: viewer can access CLEAR/GREEN, analyst additionally AMBER, and admin additionally RED and `unknown`. Detail queries intentionally return the same 404 for a missing entity and a TLP-hidden entity. Graph traversal filters hidden entities, relationships, and sightings, then removes dangling relationships.
 
 ### IOC Summary Examples
 
@@ -307,7 +326,7 @@ When tokens are configured:
 - Analyst routes cover summary, enrichment, report generation, and threat modeling.
 - Admin routes cover integration tests, notification tests, and audit access.
 
-STIX/TAXII exports also enforce TLP distribution: viewer is capped at GREEN, analyst at AMBER, and admin can access RED or unknown custom markings. Relationships left dangling by filtering are removed.
+STIX/TAXII exports also enforce TLP distribution: viewer is capped at GREEN, analyst at AMBER, and admin can access RED or unknown custom markings. Relationships left dangling by filtering are removed. Threat Knowledge queries use the same role caps and retain unmapped markings as admin-only `unknown`.
 
 Tokens can be passed as:
 
@@ -338,7 +357,7 @@ The notifier primes its baseline on startup, so the first digest only contains n
 | `PORT` | `4000` | Backend port. |
 | `REFRESH_INTERVAL_MS` | `900000` | Feed refresh interval. |
 | `REFRESH_<SOURCE>_INTERVAL_MS` | Source default | Per-source minimum refresh interval override. |
-| `DATA_DIR` | Empty | Enables SQLite persistence for IOC/CVE snapshots, historical objects, observations, versioned STIX graphs, jobs, cases, rules, audit, notifications, and trends. |
+| `DATA_DIR` | Empty | Enables SQLite persistence for IOC/CVE snapshots, historical objects, observations, versioned STIX graphs, threat-knowledge entities/relationships/sightings/evidence, jobs, cases, rules, audit, notifications, and trends. |
 | `VITE_API_BASE` | Empty | Frontend API base. Empty means same-origin or dev proxy. |
 | `VITE_API_PROXY` | `http://localhost:4000` | Vite dev proxy target for `/api`. |
 | `VITE_API_TOKEN` | Empty | Local/isolated use only. It is embedded in the bundle; production browsers should use the trusted auth proxy. |

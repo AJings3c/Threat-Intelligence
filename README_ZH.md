@@ -76,6 +76,7 @@ Threat Intelligence Platform 是一个面向安全运营、威胁情报分析、
 | 工作区 | 作用 |
 | --- | --- |
 | **总览 Overview** | 情报源健康、核心指标、地图、CVE、趋势、Hash/Malware 总览。 |
+| **威胁知识 Threat Knowledge** | 检索威胁行为者、入侵集、战役、恶意软件、攻击模式、基础设施和指标，并沿关系图核验来源、TLP、外部引用与证据。 |
 | **威胁狩猎 Hunt** | 单个或批量 IOC 查询、CSV 导出、查询耗时和持久化狩猎历史。 |
 | **案例 Cases** | 创建调查案例，维护严重性、状态、IOC 和分析评论。 |
 | **规则与自动化 Rules** | 配置 IOC 匹配或阈值规则、Webhook/自动富化动作，并查看执行历史。 |
@@ -160,7 +161,7 @@ threat-intel-platform/
 - Express + TypeScript API。
 - 启动刷新和持久化后台任务刷新，默认 `REFRESH_INTERVAL_MS=900000`。
 - 每个来源有独立最小刷新间隔，避免过度请求上游。
-- 设置 `DATA_DIR` 后持久化 IOC、CVE、来源观测、历史对象、原始 STIX 图及版本、MISP 检测制品、案件、规则、审计和后台任务。
+- 设置 `DATA_DIR` 后持久化 IOC、CVE、来源观测、历史对象、原始 STIX 图及版本、威胁知识投影与证据、MISP 检测制品、案件、规则、审计和后台任务。
 - 后台任务具备租约、去重、重试、指数退避和死信状态。
 - `/api/stream` 提供刷新事件的 SSE 流。
 
@@ -245,6 +246,10 @@ npm start
 | `GET /api/detection-artifacts` | 查询 MISP 导入的 Sigma/YARA/Snort 检测制品；仅存储展示，不自动执行。需要 analyst 角色和持久化。 |
 | `GET /api/stix/objects` | 按 `type`/`id` 查询经 TLP 授权过滤的 STIX 实体和版本。需要 analyst 角色。 |
 | `GET /api/stix/graph/:id` | 查询 STIX 对象的关系邻域，`depth` 限制为 0-3。需要 analyst 角色。 |
+| `GET /api/knowledge/types` | 返回可查询的威胁知识实体类型。需要 viewer 角色，不要求启用持久化。 |
+| `GET /api/knowledge/entities` | 分页检索经 TLP 过滤的威胁组织、Intrusion Set、Campaign、Malware、Tool、ATT&CK Pattern 等知识实体。需要 viewer 角色和持久化。 |
+| `GET /api/knowledge/entities/:id` | 按原始 STIX ID 读取一个经 TLP 过滤的知识实体。需要 viewer 角色和持久化。 |
+| `GET /api/knowledge/entities/:id/graph` | 查询实体、显式关系和 Sighting 组成的 TLP 过滤邻域，`depth` 限制为 0-3。需要 viewer 角色和持久化。 |
 | `POST /api/extract-iocs` | 从邮件/工单/新闻正文确定性提取并 refang URL、域名、IP、Hash、CVE，同时标注本地命中。需要 analyst 角色。 |
 
 TAXII 接口：
@@ -254,6 +259,20 @@ TAXII 接口：
 - `GET /taxii2/root/collections/`
 - `GET /taxii2/root/collections/:id/objects/`
 - `GET /taxii2/root/collections/:id/manifest/`
+
+#### Threat Knowledge 查询语义
+
+`GET /api/knowledge/entities` 支持以下查询参数：
+
+- `types`：逗号分隔的实体类型，取值以 `/api/knowledge/types` 返回结果为准；不支持的类型返回 400。
+- `q`：在规范化名称、别名和外部 ID 中进行不区分大小写的包含搜索，最长 200 个字符。
+- `limit`：每页数量，默认 100，范围 1-1000；`offset`：非负偏移量，默认 0。
+
+`/api/knowledge/types` 无查询参数，响应为 `{ entityTypes }`；实体详情接口也无查询参数。列表响应为 `{ entities, total, limit, offset }`。`:id` 必须是最长 200 个字符且包含 `--` 的 STIX ID。图接口的 `depth` 默认为 1，并会被规范到 0-3；响应为 `{ rootId, depth, entities, relationships, sightings }`。
+
+四个 Threat Knowledge 接口都至少需要 viewer 角色。`/api/knowledge/types` 可在纯内存模式使用；实体列表、详情和图查询要求配置 `DATA_DIR` 并重启服务，否则返回 503。启用 SQLite 后，服务会安装 Threat Knowledge schema v6、回填已保存的原始 STIX 对象，并持续投影后续 STIX/TAXII 导入。v6 不覆盖同一 STIX ID/版本首次归档的 canonical payload，同时按 connector 保留其首个 payload；同 ID/版本但内容不同的后续变体会带 SHA-256 写入 conflict 隔离表，且不会进入知识投影。关系或观测先于端点实体到达时会进入待解析队列，并在后续实体导入后自动重试。
+
+知识查询按角色执行 TLP 分发：viewer 可见 CLEAR/GREEN，analyst 额外可见 AMBER，admin 还可见 RED 和 `unknown`。详情接口会将“不存在”和“因 TLP 不可见”统一返回 404；图遍历会过滤不可见实体、关系和 Sighting，并移除因此产生的悬空关系。
 
 ### IOC 汇总示例
 
@@ -307,7 +326,7 @@ curl -X POST http://localhost:4000/api/notify/test
 - analyst 用于调查、富化、报告和威胁建模。
 - admin 用于集成测试、通知测试和审计访问。
 
-STIX/TAXII 导出同时执行 TLP 分发策略：viewer 最高 GREEN，analyst 最高 AMBER，admin 可访问 RED 和未知自定义标记；被过滤对象关联的悬空 relationship 也会移除。
+STIX/TAXII 导出同时执行 TLP 分发策略：viewer 最高 GREEN，analyst 最高 AMBER，admin 可访问 RED 和未知自定义标记；被过滤对象关联的悬空 relationship 也会移除。Threat Knowledge 查询使用相同的角色上限，并把未映射标记保留为仅 admin 可见的 `unknown`。
 
 Token 传递方式：
 
@@ -338,7 +357,7 @@ STIX、TAXII 和 Markdown 导出均返回 `Content-Digest` 与 `X-Content-SHA256
 | `PORT` | `4000` | 后端端口。 |
 | `REFRESH_INTERVAL_MS` | `900000` | 情报刷新周期。 |
 | `REFRESH_<SOURCE>_INTERVAL_MS` | 来源默认值 | 单个来源最小刷新间隔覆盖。 |
-| `DATA_DIR` | 空 | 启用 SQLite 持久化，包括完整 IOC/CVE 快照、历史对象、来源观测、版本化 STIX 图、任务队列、案件、规则、审计、推送和趋势。 |
+| `DATA_DIR` | 空 | 启用 SQLite 持久化，包括完整 IOC/CVE 快照、历史对象、来源观测、版本化 STIX 图、威胁知识实体/关系/Sighting/证据、任务队列、案件、规则、审计、推送和趋势。 |
 | `VITE_API_BASE` | 空 | 前端 API base。空值表示同源或开发代理。 |
 | `VITE_API_PROXY` | `http://localhost:4000` | Vite 开发环境 `/api` 代理目标。 |
 | `VITE_API_TOKEN` | 空 | 仅用于本地/隔离环境。它会进入构建产物，生产浏览器部署应使用可信认证代理。 |

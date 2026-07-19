@@ -20,6 +20,10 @@ import type {
   InvestigationHistoryEntry,
   ArchitectureThreatModel,
   Language,
+  KnowledgeEntity,
+  KnowledgeEntityPage,
+  KnowledgeEntityType,
+  KnowledgeGraph,
 } from './types';
 
 const BASE = import.meta.env.VITE_API_BASE ?? '';
@@ -149,6 +153,35 @@ export function fetchInvestigationHistory(limit = 20): Promise<{ enabled: boolea
 
 export function fetchArchitectureThreatModel(lang: Language = 'en'): Promise<ArchitectureThreatModel> {
   return getJson<ArchitectureThreatModel>(`/api/threat-model?lang=${lang}`);
+}
+
+export interface KnowledgeQuery {
+  types?: KnowledgeEntityType[];
+  q?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export function fetchKnowledgeTypes(): Promise<{ entityTypes: KnowledgeEntityType[] }> {
+  return getJson<{ entityTypes: KnowledgeEntityType[] }>('/api/knowledge/types');
+}
+
+export function fetchKnowledgeEntities(query: KnowledgeQuery = {}): Promise<KnowledgeEntityPage> {
+  const params = new URLSearchParams();
+  if (query.types?.length) params.set('types', query.types.join(','));
+  if (query.q) params.set('q', query.q);
+  if (query.limit !== undefined) params.set('limit', String(query.limit));
+  if (query.offset !== undefined) params.set('offset', String(query.offset));
+  const qs = params.toString();
+  return getJson<KnowledgeEntityPage>(`/api/knowledge/entities${qs ? `?${qs}` : ''}`);
+}
+
+export function fetchKnowledgeEntity(id: string): Promise<KnowledgeEntity> {
+  return getJson<KnowledgeEntity>(`/api/knowledge/entities/${encodeURIComponent(id)}`);
+}
+
+export function fetchKnowledgeGraph(id: string, depth = 1): Promise<KnowledgeGraph> {
+  return getJson<KnowledgeGraph>(`/api/knowledge/entities/${encodeURIComponent(id)}/graph?depth=${depth}`);
 }
 
 export async function fetchText(path: string): Promise<string> {

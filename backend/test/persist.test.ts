@@ -5,6 +5,7 @@ import {
   initPersistence,
   closePersistence,
   isPersistEnabled,
+  withPersistenceDatabase,
   saveGeo,
   loadGeoCache,
   recordSeen,
@@ -28,6 +29,7 @@ import {
   persistDetectionArtifacts,
   setConnectorState,
 } from '../src/persist.js';
+import { backfillKnowledgeProjection, getKnowledgeEntity } from '../src/knowledge/repository.js';
 import type { CveItem, ThreatIndicator } from '../src/types.js';
 import { store } from '../src/store.js';
 
@@ -257,6 +259,157 @@ describe('persist (node:sqlite)', () => {
       relationship_type: 'uses',
       target_ref: attackPatternId,
     });
+  });
+
+  it('retains per-connector provenance when the same STIX object version is re-imported', () => {
+    const actorId = 'threat-actor--44444444-4444-4444-8444-444444444444';
+    const actor = {
+      type: 'threat-actor',
+      spec_version: '2.1',
+      id: actorId,
+      created: '2026-03-01T00:00:00.000Z',
+      modified: '2026-03-02T00:00:00.000Z',
+      name: 'Multi-source Actor',
+    };
+
+    expect(persistStixObjects([actor], 'taxii-alpha', 4100)).toBe(1);
+    expect(persistStixObjects([actor], 'taxii-beta', 4200)).toBe(1);
+    expect(persistStixObjects([actor], 'taxii-alpha', 4300)).toBe(1);
+
+    expect(loadStixObjects('taxii-alpha').filter((object) => object.id === actorId)).toHaveLength(1);
+    expect(loadStixObjects('taxii-beta').filter((object) => object.id === actorId)).toHaveLength(1);
+
+    const sourceRows = withPersistenceDatabase(
+      (database) =>
+        database
+          .prepare(`
+            SELECT connector, first_imported_at, last_imported_at
+            FROM imported_stix_sources
+            WHERE object_id = ? AND version = ?
+            ORDER BY connector
+          `)
+          .all(actorId, actor.modified) as Array<{
+          connector: string;
+          first_imported_at: number;
+          last_imported_at: number;
+        }>,
+      [],
+    );
+    expect(sourceRows).toEqual([
+      { connector: 'taxii-alpha', first_imported_at: 4100, last_imported_at: 4300 },
+      { connector: 'taxii-beta', first_imported_at: 4200, last_imported_at: 4200 },
+    ]);
+    const conflictCount = withPersistenceDatabase(
+      (database) => {
+        const row = database
+          .prepare('SELECT COUNT(*) AS count FROM imported_stix_conflicts WHERE object_id = ? AND version = ?')
+          .get(actorId, actor.modified) as { count: number };
+        return row.count;
+      },
+      -1,
+    );
+    expect(conflictCount).toBe(0);
+
+    const projectedSources = withPersistenceDatabase(
+      (database) => getKnowledgeEntity(database, 'admin', actorId)?.sources.map((source) => source.name).sort() ?? [],
+      [],
+    );
+    expect(projectedSources).toEqual(['taxii-alpha', 'taxii-beta']);
+  });
+
+  it('isolates conflicting connector payloads without replacing canonical raw data or knowledge', () => {
+    const actorId = 'threat-actor--55555555-5555-4555-8555-555555555555';
+    const canonical = {
+      type: 'threat-actor',
+      spec_version: '2.1',
+      id: actorId,
+      created: '2026-04-01T00:00:00.000Z',
+      modified: '2026-04-02T00:00:00.000Z',
+      name: 'Canonical Actor Name',
+    };
+    const conflicting = {
+      ...canonical,
+      name: 'Conflicting Actor Name',
+      aliases: ['Untrusted Conflict Alias'],
+    };
+
+    expect(persistStixObjects([canonical], 'taxii-canonical', 4400)).toBe(1);
+    expect(persistStixObjects([conflicting], 'taxii-conflict', 4500)).toBe(1);
+
+    expect(loadStixObjects().find((object) => object.id === actorId)).toMatchObject({
+      name: 'Canonical Actor Name',
+    });
+    expect(loadStixObjects('taxii-canonical').find((object) => object.id === actorId)).toMatchObject({
+      name: 'Canonical Actor Name',
+    });
+    expect(loadStixObjects('taxii-conflict').find((object) => object.id === actorId)).toMatchObject({
+      name: 'Conflicting Actor Name',
+      aliases: ['Untrusted Conflict Alias'],
+    });
+
+    const rawState = withPersistenceDatabase<{
+      canonicalRow: { connector: string; payload_json: string } | null;
+      payloadRows: Array<{ connector: string; payload_json: string }>;
+      conflictRows: Array<{ connector: string; payload_json: string }>;
+    }>(
+      (database) => {
+        const canonicalRow = database
+          .prepare('SELECT connector, payload_json FROM imported_stix_objects WHERE object_id = ? AND version = ?')
+          .get(actorId, canonical.modified) as { connector: string; payload_json: string };
+        const payloadRows = database
+          .prepare(`
+            SELECT connector, payload_json
+            FROM imported_stix_payloads
+            WHERE object_id = ? AND version = ?
+            ORDER BY connector
+          `)
+          .all(actorId, canonical.modified) as Array<{ connector: string; payload_json: string }>;
+        const conflictRows = database
+          .prepare(`
+            SELECT connector, payload_json
+            FROM imported_stix_conflicts
+            WHERE object_id = ? AND version = ?
+            ORDER BY connector
+          `)
+          .all(actorId, canonical.modified) as Array<{ connector: string; payload_json: string }>;
+        return { canonicalRow, payloadRows, conflictRows };
+      },
+      { canonicalRow: null, payloadRows: [], conflictRows: [] },
+    );
+
+    expect(rawState.canonicalRow).toEqual({
+      connector: 'taxii-canonical',
+      payload_json: JSON.stringify(canonical),
+    });
+    expect(rawState.payloadRows.map((row) => [row.connector, JSON.parse(row.payload_json).name])).toEqual([
+      ['taxii-canonical', 'Canonical Actor Name'],
+      ['taxii-conflict', 'Conflicting Actor Name'],
+    ]);
+    expect(rawState.conflictRows).toHaveLength(1);
+    expect(rawState.conflictRows[0].connector).toBe('taxii-conflict');
+    expect(JSON.parse(rawState.conflictRows[0].payload_json)).toMatchObject({ name: 'Conflicting Actor Name' });
+
+    const projected = withPersistenceDatabase(
+      (database) => getKnowledgeEntity(database, 'admin', actorId),
+      null,
+    );
+    expect(projected).toMatchObject({ name: 'Canonical Actor Name' });
+    expect(projected?.aliases).not.toContain('Untrusted Conflict Alias');
+    expect(projected?.sources.map((source) => source.name)).toEqual(['taxii-canonical']);
+
+    withPersistenceDatabase(
+      (database) => {
+        backfillKnowledgeProjection(database);
+      },
+      undefined,
+    );
+    const reprojected = withPersistenceDatabase(
+      (database) => getKnowledgeEntity(database, 'admin', actorId),
+      null,
+    );
+    expect(reprojected).toMatchObject({ name: 'Canonical Actor Name' });
+    expect(reprojected?.aliases).not.toContain('Untrusted Conflict Alias');
+    expect(reprojected?.sources.map((source) => source.name)).toEqual(['taxii-canonical']);
   });
 
   it('stores detection artifacts separately from executable automation rules', () => {

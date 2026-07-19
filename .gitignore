@@ -10,6 +10,9 @@ coverage/
 .vite/
 .cache/
 artifacts/
+screenshots/
+__pycache__/
+*.py[cod]
 
 # Keep development-only docs and local Codex/agent skills out of the repository.
 *.md
@@ -17,6 +20,9 @@ artifacts/
 !/README_ZH.md
 !/README_EN.md
 docs/
+!docs/
+docs/*
+!docs/THREAT_KNOWLEDGE_MODEL.md
 .codex/
 .agents/
 skills/

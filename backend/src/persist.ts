@@ -1,8 +1,16 @@
 import path from 'node:path';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import { errorMessage } from './util.js';
 import type { AuditEvent, CveItem, DetectionArtifact, InvestigationHistoryEntry, ThreatIndicator } from './types.js';
+import type { SqliteDatabase } from './persistenceDb.js';
+import { withTransaction } from './persistenceDb.js';
+import { applyKnowledgeSchema } from './knowledge/schema.js';
+import {
+  backfillKnowledgeProjection,
+  projectAndPersistKnowledgeObjects,
+} from './knowledge/repository.js';
 
 // Lightweight, OPT-IN persistence layer backed by Node's built-in SQLite (node:sqlite,
 // Node >= 22). It is enabled only when DATA_DIR is set; otherwise everything is a no-op
@@ -53,22 +61,17 @@ export interface PersistedStixObject {
   [key: string]: unknown;
 }
 
-interface Statement {
-  all(...params: unknown[]): unknown[];
-  get(...params: unknown[]): unknown;
-  run(...params: unknown[]): unknown;
-}
-
-interface Database {
-  exec(sql: string): void;
-  prepare(sql: string): Statement;
-  close(): void;
-}
-
-let db: Database | null = null;
+let db: SqliteDatabase | null = null;
 
 export function isPersistEnabled(): boolean {
   return db !== null;
+}
+
+export function withPersistenceDatabase<T>(
+  operation: (database: SqliteDatabase) => T,
+  fallback: T,
+): T {
+  return db ? operation(db) : fallback;
 }
 
 // Open (or create) the SQLite database. Safe to call once at startup.
@@ -79,7 +82,7 @@ export function initPersistence(): void {
     fs.mkdirSync(dir, { recursive: true });
     const require = createRequire(import.meta.url);
     const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
-    db = new DatabaseSync(path.join(dir, 'threat-intel.db')) as unknown as Database;
+    db = new DatabaseSync(path.join(dir, 'threat-intel.db')) as unknown as SqliteDatabase;
     db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
     db.exec(`
       CREATE TABLE IF NOT EXISTS geo_cache (
@@ -313,12 +316,25 @@ export function initPersistence(): void {
       VALUES (2, CURRENT_TIMESTAMP);
       INSERT OR IGNORE INTO schema_migrations (version, applied_at)
       VALUES (3, CURRENT_TIMESTAMP);
-      INSERT OR IGNORE INTO schema_migrations (version, applied_at)
-      VALUES (2, CURRENT_TIMESTAMP);
     `);
     const auditColumns = db.prepare('PRAGMA table_info(audit_events)').all() as Array<{ name: string }>;
     if (!auditColumns.some((column) => column.name === 'principal')) {
       db.exec("ALTER TABLE audit_events ADD COLUMN principal TEXT NOT NULL DEFAULT ''");
+    }
+    applyKnowledgeSchema(db);
+    try {
+      const backfill = backfillKnowledgeProjection(db);
+      if (backfill.entities + backfill.relationships + backfill.sightings > 0) {
+        console.log(
+          `[persist] knowledge projection backfilled: ${backfill.entities} entities, ` +
+            `${backfill.relationships} relationships, ${backfill.sightings} sightings`,
+        );
+      }
+      if (backfill.warnings.length > 0) {
+        console.warn(`[persist] knowledge projection backfill warnings: ${backfill.warnings.length}`);
+      }
+    } catch (err) {
+      console.warn(`[persist] knowledge projection backfill failed: ${errorMessage(err)}`);
     }
     console.log(`[persist] SQLite persistence enabled at ${dir}`);
   } catch (err) {
@@ -632,28 +648,61 @@ export function persistStixObjects(
     'INSERT INTO imported_stix_objects ' +
       '(object_id, version, object_type, connector, payload_json, first_imported_at, last_imported_at) ' +
       'VALUES (?, ?, ?, ?, ?, ?, ?) ' +
-      'ON CONFLICT(object_id, version) DO UPDATE SET connector = excluded.connector, ' +
-      'payload_json = excluded.payload_json, last_imported_at = excluded.last_imported_at',
+      'ON CONFLICT(object_id, version) DO UPDATE SET ' +
+      'last_imported_at = MAX(imported_stix_objects.last_imported_at, excluded.last_imported_at)',
+  );
+  const sourceUpsert = db.prepare(
+    'INSERT INTO imported_stix_sources ' +
+      '(object_id, version, connector, first_imported_at, last_imported_at) VALUES (?, ?, ?, ?, ?) ' +
+      'ON CONFLICT(object_id, version, connector) DO UPDATE SET ' +
+      'last_imported_at = MAX(imported_stix_sources.last_imported_at, excluded.last_imported_at)',
+  );
+  const payloadInsert = db.prepare(
+    'INSERT OR IGNORE INTO imported_stix_payloads ' +
+      '(object_id, version, connector, payload_json, payload_sha256, first_imported_at, last_imported_at) ' +
+      'VALUES (?, ?, ?, ?, ?, ?, ?)',
+  );
+  const payloadTouch = db.prepare(
+    'UPDATE imported_stix_payloads SET last_imported_at = MAX(last_imported_at, ?) ' +
+      'WHERE object_id = ? AND version = ? AND connector = ?',
+  );
+  const conflictInsert = db.prepare(
+    'INSERT OR IGNORE INTO imported_stix_conflicts ' +
+      '(object_id, version, connector, payload_sha256, payload_json, detected_at) ' +
+      'VALUES (?, ?, ?, ?, ?, ?)',
+  );
+  const canonicalPayload = db.prepare(
+    'SELECT payload_json FROM imported_stix_objects WHERE object_id = ? AND version = ?',
   );
   let persisted = 0;
-  db.exec('BEGIN IMMEDIATE');
-  try {
+  const accepted: PersistedStixObject[] = [];
+  withTransaction(db, () => {
     for (const object of objects) {
       if (!validStixObject(object)) continue;
       const payload = JSON.stringify(object);
       if (Buffer.byteLength(payload, 'utf8') > 1_000_000) continue;
       const version = object.modified ?? object.created ?? 'unversioned';
+      const existing = canonicalPayload.get(object.id, version) as { payload_json: string } | undefined;
+      const payloadHash = crypto.createHash('sha256').update(payload).digest('hex');
       upsert.run(object.id, version, object.type, connector, payload, importedAt, importedAt);
+      sourceUpsert.run(object.id, version, connector, importedAt, importedAt);
+      payloadInsert.run(object.id, version, connector, payload, payloadHash, importedAt, importedAt);
+      payloadTouch.run(importedAt, object.id, version, connector);
+      if (existing && existing.payload_json !== payload) {
+        conflictInsert.run(object.id, version, connector, payloadHash, payload, importedAt);
+      } else {
+        accepted.push(object);
+      }
       persisted += 1;
     }
-    db.exec('COMMIT');
-  } catch (err) {
+  });
+  if (accepted.length > 0) {
     try {
-      db.exec('ROLLBACK');
-    } catch {
-      // Preserve the original persistence error.
+      projectAndPersistKnowledgeObjects(db, accepted, connector, importedAt);
+    } catch (err) {
+      // Raw STIX remains authoritative and can be reprojected on the next start.
+      console.warn(`[persist] knowledge projection failed for ${connector}: ${errorMessage(err)}`);
     }
-    throw err;
   }
   return persisted;
 }
@@ -663,7 +712,11 @@ export function loadStixObjects(connector?: string): PersistedStixObject[] {
   const rows = (connector
     ? db
         .prepare(
-          'SELECT payload_json FROM imported_stix_objects WHERE connector = ? ORDER BY object_id, version',
+          'SELECT COALESCE(p.payload_json, o.payload_json) AS payload_json FROM imported_stix_objects o ' +
+            'JOIN imported_stix_sources s ON s.object_id = o.object_id AND s.version = o.version ' +
+            'LEFT JOIN imported_stix_payloads p ON p.object_id = s.object_id AND p.version = s.version ' +
+            'AND p.connector = s.connector ' +
+            'WHERE s.connector = ? ORDER BY o.object_id, o.version',
         )
         .all(connector)
     : db.prepare('SELECT payload_json FROM imported_stix_objects ORDER BY object_id, version').all()) as Array<{

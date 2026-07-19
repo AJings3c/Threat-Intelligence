@@ -21,11 +21,12 @@ The product aggregates public and configured threat-intelligence feeds into one 
 - Review intelligence quality, time decay, false positives, geographic distribution, network relationships, and event timelines.
 - Build evidence-backed STRIDE/DREAD and architecture threat models with assets, boundaries, flows, controls, and attack paths.
 - Exchange STIX 2.1 data, expose read-only TAXII 2.1 collections, inspect STIX relationship neighborhoods, and review imported detection artifacts.
+- Search threat actors, intrusion sets, campaigns, malware, tools, ATT&CK techniques, infrastructure, vulnerabilities, and indicators as an evidence-backed knowledge graph.
 - Extract and refang IOCs deterministically from email, ticket, or news text while showing local matches.
 
 ## Product Surface
 
-The application contains 13 bilingual workspaces: Overview, Hunt, Cases, Rules, Quality, Network, Timeline, Heatmap, Sources, IOC Summary, Modeling, Intel Feed, and Operations. The interface supports dark/light themes, comfortable/compact density, keyboard access, responsive layouts, and explicit loading, empty, error, and disabled states.
+The application contains 14 bilingual workspaces: Overview, Threat Knowledge, Hunt, Cases, Rules, Quality, Network, Timeline, Heatmap, Sources, IOC Summary, Modeling, Intel Feed, and Operations. The interface supports dark/light themes, comfortable/compact density, keyboard access, responsive layouts, and explicit loading, empty, error, and disabled states.
 
 ## Trust Boundary
 

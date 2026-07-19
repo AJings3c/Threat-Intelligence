@@ -66,6 +66,13 @@ import { prometheusMetrics } from './metrics.js';
 import { filterStixObjectsForRole } from './stixAccess.js';
 import { queryStixObjects, stixNeighborhood } from './stixGraph.js';
 import { extractIocs } from './iocExtract.js';
+import {
+  getThreatKnowledgeEntity,
+  getThreatKnowledgeGraph,
+  listThreatKnowledge,
+  threatKnowledgeEntityTypes,
+} from './knowledge/service.js';
+import { isKnowledgeEntityType } from './knowledge/repository.js';
 
 
 const PORT = Number(process.env.PORT ?? 4000);
@@ -552,6 +559,81 @@ api.get('/stix/graph/:id', auth.requireRole('analyst'), audit('stix_graph_query'
   }
   res.json({ rootId: id, depth: normalizedDepth, objects });
 });
+
+api.get('/knowledge/types', auth.requireRole('viewer'), (_req, res) => {
+  res.json({ entityTypes: threatKnowledgeEntityTypes() });
+});
+
+api.get(
+  '/knowledge/entities',
+  auth.requireRole('viewer'),
+  requirePersistence,
+  audit('knowledge_entity_query'),
+  (req, res) => {
+    const requestedTypes = typeof req.query.types === 'string' ? req.query.types.split(',').filter(Boolean) : [];
+    if (requestedTypes.some((type) => !isKnowledgeEntityType(type))) {
+      res.status(400).json({ error: 'types contains an unsupported knowledge entity type' });
+      return;
+    }
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : undefined;
+    if (q && q.length > 200) {
+      res.status(400).json({ error: 'q exceeds the 200 character search limit' });
+      return;
+    }
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    const offset = req.query.offset ? Number(req.query.offset) : undefined;
+    res.json(
+      listThreatKnowledge(res.locals.role as ApiRole, {
+        types: requestedTypes.filter(isKnowledgeEntityType),
+        q,
+        limit: Number.isFinite(limit) ? limit : undefined,
+        offset: Number.isFinite(offset) ? offset : undefined,
+      }),
+    );
+  },
+);
+
+api.get(
+  '/knowledge/entities/:id',
+  auth.requireRole('viewer'),
+  requirePersistence,
+  audit('knowledge_entity_read'),
+  (req, res) => {
+    const id = req.params.id.trim();
+    if (id.length > 200 || !id.includes('--')) {
+      res.status(400).json({ error: 'invalid knowledge entity id' });
+      return;
+    }
+    const entity = getThreatKnowledgeEntity(res.locals.role as ApiRole, id);
+    if (!entity) {
+      res.status(404).json({ error: 'knowledge entity not found or not permitted by TLP policy' });
+      return;
+    }
+    res.json(entity);
+  },
+);
+
+api.get(
+  '/knowledge/entities/:id/graph',
+  auth.requireRole('viewer'),
+  requirePersistence,
+  audit('knowledge_graph_query'),
+  (req, res) => {
+    const id = req.params.id.trim();
+    if (id.length > 200 || !id.includes('--')) {
+      res.status(400).json({ error: 'invalid knowledge entity id' });
+      return;
+    }
+    const requestedDepth = req.query.depth ? Number(req.query.depth) : 1;
+    const depth = Math.min(3, Math.max(0, Math.floor(Number.isFinite(requestedDepth) ? requestedDepth : 1)));
+    const graph = getThreatKnowledgeGraph(res.locals.role as ApiRole, id, depth);
+    if (!graph) {
+      res.status(404).json({ error: 'knowledge entity not found or not permitted by TLP policy' });
+      return;
+    }
+    res.json(graph);
+  },
+);
 
 api.post('/extract-iocs', auth.requireRole('analyst'), audit('ioc_text_extract'), (req, res) => {
   const text = typeof req.body?.text === 'string' ? req.body.text : '';

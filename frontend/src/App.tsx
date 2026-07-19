@@ -22,6 +22,7 @@ import {
   Timer,
   Zap,
   BarChart3,
+  BookOpen,
   FolderKanban,
   Wrench,
 } from 'lucide-react';
@@ -81,6 +82,9 @@ const ThreatHeatmap = lazy(() =>
 const OperationsWorkspace = lazy(() =>
   import('./components/OperationsWorkspace').then((module) => ({ default: module.OperationsWorkspace })),
 );
+const KnowledgeWorkspace = lazy(() =>
+  import('./components/KnowledgeWorkspace').then((module) => ({ default: module.KnowledgeWorkspace })),
+);
 
 const REFRESH_MS = 60_000;
 
@@ -93,11 +97,11 @@ function WorkspaceFallback({ lang }: { lang: Language }) {
   );
 }
 
-export type WorkspaceId = 'overview' | 'sources' | 'investigation' | 'modeling' | 'feed' | 'hunt' | 'rules' | 'quality' | 'cases' | 'network' | 'timeline' | 'heatmap' | 'operations';
+export type WorkspaceId = 'overview' | 'knowledge' | 'sources' | 'investigation' | 'modeling' | 'feed' | 'hunt' | 'rules' | 'quality' | 'cases' | 'network' | 'timeline' | 'heatmap' | 'operations';
 export type DensityMode = 'comfortable' | 'compact';
 export type ThemeMode = 'dark' | 'light';
 
-const WORKSPACE_ORDER: WorkspaceId[] = ['overview', 'hunt', 'cases', 'rules', 'quality', 'network', 'timeline', 'heatmap', 'sources', 'investigation', 'modeling', 'feed', 'operations'];
+const WORKSPACE_ORDER: WorkspaceId[] = ['overview', 'knowledge', 'hunt', 'cases', 'rules', 'quality', 'network', 'timeline', 'heatmap', 'sources', 'investigation', 'modeling', 'feed', 'operations'];
 
 const WORKBENCH_TEXT: Record<
   Language,
@@ -170,6 +174,7 @@ const WORKBENCH_TEXT: Record<
     feedCount: 'Feed count',
     workspace: {
       overview: 'Overview',
+      knowledge: 'Threat Knowledge',
       hunt: 'Hunt',
       cases: 'Cases',
       rules: 'Rules',
@@ -184,10 +189,10 @@ const WORKBENCH_TEXT: Record<
       operations: 'Operations',
     },
     workspaceTitle: {
-      overview: 'Operational Overview', hunt: 'Threat Hunting', cases: 'Cases', rules: 'Rules & Automation', quality: 'Intelligence Quality', network: 'Threat Network', timeline: 'IOC Timeline', heatmap: 'Geographic Heatmap', sources: 'Sources & Config', investigation: 'IOC Summary', modeling: 'Threat Modeling', feed: 'Intel Feed', operations: 'Operations & Exchange',
+      overview: 'Operational Overview', knowledge: 'Threat Knowledge', hunt: 'Threat Hunting', cases: 'Cases', rules: 'Rules & Automation', quality: 'Intelligence Quality', network: 'Threat Network', timeline: 'IOC Timeline', heatmap: 'Geographic Heatmap', sources: 'Sources & Config', investigation: 'IOC Summary', modeling: 'Threat Modeling', feed: 'Intel Feed', operations: 'Operations & Exchange',
     },
     workspaceSubtitle: {
-      overview: 'Current feed health, geospatial signals, CVEs, malware and trend evidence.', hunt: 'Batch IOC search across historical intelligence feeds and saved hunt history.', cases: 'Collaborative incident investigation with IOC evidence and comments.', rules: 'Configure implemented responses and inspect execution history.', quality: 'Quality scoring, time decay, and false-positive tracking.', network: 'Evidence provenance visualization with IOC-to-source relationships.', timeline: 'Chronological IOC observations grouped by evidence-backed categories.', heatmap: 'Global threat density visualization with country-level aggregation.', sources: 'Credential state, test controls, enrichment providers and notification readiness.', investigation: 'Observable summary, local evidence, STRIDE scenarios, enrichment and export.', modeling: 'Source-backed architecture model with DFD, STRIDE, DREAD, controls and attack paths.', feed: 'Filterable IOC table with source, confidence, reliability, country and recency.', operations: 'STIX exchange, detection artifacts, text extraction, jobs and audit visibility.',
+      overview: 'Current feed health, geospatial signals, CVEs, malware and trend evidence.', knowledge: 'Evidence-backed actors, intrusion sets, campaigns, malware, techniques, infrastructure and relationships.', hunt: 'Batch IOC search across historical intelligence feeds and saved hunt history.', cases: 'Collaborative incident investigation with IOC evidence and comments.', rules: 'Configure implemented responses and inspect execution history.', quality: 'Quality scoring, time decay, and false-positive tracking.', network: 'Evidence provenance visualization with IOC-to-source relationships.', timeline: 'Chronological IOC observations grouped by evidence-backed categories.', heatmap: 'Global threat density visualization with country-level aggregation.', sources: 'Credential state, test controls, enrichment providers and notification readiness.', investigation: 'Observable summary, local evidence, STRIDE scenarios, enrichment and export.', modeling: 'Source-backed architecture model with DFD, STRIDE, DREAD, controls and attack paths.', feed: 'Filterable IOC table with source, confidence, reliability, country and recency.', operations: 'STIX exchange, detection artifacts, text extraction, jobs and audit visibility.',
     },
     skip: 'Skip to content',
     currentWorkspace: 'Current workspace',
@@ -224,6 +229,7 @@ const WORKBENCH_TEXT: Record<
     feedCount: '情报数量',
     workspace: {
       overview: '总览',
+      knowledge: '威胁知识',
       hunt: '狩猎',
       cases: '案例',
       rules: '规则',
@@ -238,10 +244,10 @@ const WORKBENCH_TEXT: Record<
       operations: '运维交换',
     },
     workspaceTitle: {
-      overview: '运营总览', hunt: '威胁狩猎', cases: '案例', rules: '规则与自动化', quality: '情报质量', network: '威胁来源网络', timeline: 'IOC 时间线', heatmap: '地理热力图', sources: '来源与配置', investigation: 'IOC 汇总', modeling: '威胁建模', feed: '情报列表', operations: '运维与交换',
+      overview: '运营总览', knowledge: '威胁知识', hunt: '威胁狩猎', cases: '案例', rules: '规则与自动化', quality: '情报质量', network: '威胁来源网络', timeline: 'IOC 时间线', heatmap: '地理热力图', sources: '来源与配置', investigation: 'IOC 汇总', modeling: '威胁建模', feed: '情报列表', operations: '运维与交换',
     },
     workspaceSubtitle: {
-      overview: '当前情报源健康、地理信号、CVE、恶意软件与趋势证据。', hunt: '跨历史情报执行批量 IOC 检索并查看狩猎历史。', cases: '通过 IOC 证据和评论协作跟踪事件调查。', rules: '配置已实现的响应动作并查看执行历史。', quality: '质量评分、时间衰减与假阳性跟踪。', network: '展示 IOC 与来源之间的证据溯源关系。', timeline: '按有证据支持的类别展示 IOC 观测时间顺序。', heatmap: '按国家或地区聚合展示全球威胁密度。', sources: '凭据状态、测试控制、富化服务商与通知就绪状态。', investigation: '可观测对象汇总、本地证据、STRIDE 场景、富化与导出。', modeling: '基于当前情报源的架构模型，包含 DFD、STRIDE、DREAD、控制项与攻击路径。', feed: '可过滤 IOC 表格，展示来源、置信度、可靠性、国家/地区与时间。', operations: '统一访问 STIX 交换、检测制品、文本提取、任务与审计状态。',
+      overview: '当前情报源健康、地理信号、CVE、恶意软件与趋势证据。', knowledge: '基于证据查看威胁组织、入侵集、战役、恶意软件、技术、基础设施及其关系。', hunt: '跨历史情报执行批量 IOC 检索并查看狩猎历史。', cases: '通过 IOC 证据和评论协作跟踪事件调查。', rules: '配置已实现的响应动作并查看执行历史。', quality: '质量评分、时间衰减与假阳性跟踪。', network: '展示 IOC 与来源之间的证据溯源关系。', timeline: '按有证据支持的类别展示 IOC 观测时间顺序。', heatmap: '按国家或地区聚合展示全球威胁密度。', sources: '凭据状态、测试控制、富化服务商与通知就绪状态。', investigation: '可观测对象汇总、本地证据、STRIDE 场景、富化与导出。', modeling: '基于当前情报源的架构模型，包含 DFD、STRIDE、DREAD、控制项与攻击路径。', feed: '可过滤 IOC 表格，展示来源、置信度、可靠性、国家/地区与时间。', operations: '统一访问 STIX 交换、检测制品、文本提取、任务与审计状态。',
     },
     skip: '跳转到内容',
     currentWorkspace: '当前工作区',
@@ -250,6 +256,7 @@ const WORKBENCH_TEXT: Record<
 
 const WORKSPACE_ICON: Record<WorkspaceId, ComponentType<{ className?: string }>> = {
   overview: LayoutDashboard,
+  knowledge: BookOpen,
   hunt: Target,
   cases: FolderKanban,
   rules: Zap,
@@ -359,7 +366,7 @@ function WorkspaceNav({
 }) {
   const copy = WORKBENCH_TEXT[lang];
   return (
-    <nav className={compact ? 'flex gap-2 overflow-x-auto pb-1' : 'space-y-1'} aria-label={copy.productName}>
+    <nav className={compact ? 'flex gap-2 overflow-x-auto pb-1' : 'min-h-0 flex-1 space-y-1 overflow-y-auto pr-1'} aria-label={copy.productName}>
       {WORKSPACE_ORDER.map((workspace) => {
         const Icon = WORKSPACE_ICON[workspace];
         return (
@@ -847,6 +854,19 @@ export default function App() {
               lang={language}
               theme={theme}
             />
+          )}
+
+          {activeWorkspace === 'knowledge' && (
+            <>
+              <WorkspaceTitle
+                icon={BookOpen}
+                title={copy.workspaceTitle.knowledge}
+                subtitle={copy.workspaceSubtitle.knowledge}
+              />
+              <Suspense fallback={<WorkspaceFallback lang={language} />}>
+                <KnowledgeWorkspace lang={language} />
+              </Suspense>
+            </>
           )}
 
           {activeWorkspace === 'sources' && (
